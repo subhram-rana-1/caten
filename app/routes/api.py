@@ -79,6 +79,8 @@ async def important_words_from_text(
     request: Request,
     body: ImportantWordsRequest
 ):
+    print(f'body -------> {body}')
+
     """Extract important words from text."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "important-words-from-text")
@@ -109,20 +111,15 @@ async def words_explanation(
     
     async def generate_explanations():
         """Generate SSE stream of word explanations."""
-        words_info = []
-        
         try:
             async for word_info in text_service.get_words_explanations_stream(body.text, body.important_words_location):
-                words_info.append(word_info)
-                
-                # Create partial response
-                partial_response = WordsExplanationResponse(
-                    text=body.text,
-                    words_info=words_info
-                )
-                
-                # Send SSE event
-                event_data = f"data: {partial_response.model_dump_json()}\n\n"
+                # Create response with only the current word info
+                single_word_response = {
+                    "word_info": word_info.model_dump()
+                }
+
+                # Send SSE event for this individual word
+                event_data = f"data: {json.dumps(single_word_response)}\n\n"
                 yield event_data
             
             # Send final completion event

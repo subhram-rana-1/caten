@@ -1,0 +1,236 @@
+"""API routes for the FastAPI application."""
+
+import json
+import os
+from typing import List
+from fastapi import APIRouter, UploadFile, File, Request, HTTPException
+from fastapi.responses import StreamingResponse
+import structlog
+
+from app.config import settings
+from app.models import (
+    ImageToTextResponse,
+    ImportantWordsRequest,
+    ImportantWordsResponse,
+    WordsExplanationRequest,
+    WordsExplanationResponse,
+    MoreExplanationsRequest,
+    MoreExplanationsResponse,
+    WordInfo
+)
+from app.services.image_service import image_service
+from app.services.text_service import text_service
+from app.services.llm.open_ai import openai_service
+from app.services.rate_limiter import rate_limiter
+from app.exceptions import FileValidationError, ValidationError
+
+logger = structlog.get_logger()
+
+router = APIRouter(prefix="/api/v1", tags=["API"])
+
+
+async def get_client_id(request: Request) -> str:
+    """Get client identifier for rate limiting."""
+    # Use IP address as client ID (in production, you might use authenticated user ID)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        return forwarded_for.split(",")[0].strip()
+    return request.client.host
+
+
+@router.post(
+    "/image-to-text",
+    response_model=ImageToTextResponse,
+    summary="Extract text from image",
+    description="Extract readable paragraph-like text from an uploaded image (jpeg, jpg, png, heic)"
+)
+async def image_to_text(
+    request: Request,
+    file: UploadFile = File(..., description="Image file to extract text from")
+):
+    """Extract text from an uploaded image."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "image-to-text")
+    
+    if not file.filename:
+        raise FileValidationError("No file uploaded")
+    
+    # Read file data
+    file_data = await file.read()
+    
+    # Validate and process image
+    processed_image_data, image_format = image_service.validate_image_file(file_data, file.filename)
+    
+    # Extract text using LLM
+    extracted_text = await openai_service.extract_text_from_image(processed_image_data, image_format)
+    
+    logger.info("Successfully extracted text from image", filename=file.filename, text_length=len(extracted_text))
+    
+    return ImageToTextResponse(text=extracted_text)
+
+
+@router.post(
+    "/important-words-from-text",
+    response_model=ImportantWordsResponse,
+    summary="Get important words from text",
+    description="Identify top 10 most important/difficult words in a paragraph"
+)
+async def important_words_from_text(
+    request: Request,
+    body: ImportantWordsRequest
+):
+    """Extract important words from text."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "important-words-from-text")
+    
+    # Extract important words
+    word_with_locations = await text_service.extract_important_words(body.text)
+    
+    logger.info("Successfully extracted important words", text_length=len(body.text), words_count=len(word_with_locations))
+    
+    return ImportantWordsResponse(
+        text=body.text,
+        important_words_location=word_with_locations
+    )
+
+
+@router.post(
+    "/words-explanation",
+    summary="Get word explanations with streaming",
+    description="Provide contextual meaning + 2 simplified example sentences for each important word via Server-Sent Events"
+)
+async def words_explanation(
+    request: Request,
+    body: WordsExplanationRequest
+):
+    """Stream word explanations as they become available."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "words-explanation")
+    
+    async def generate_explanations():
+        """Generate SSE stream of word explanations."""
+        words_info = []
+        
+        try:
+            async for word_info in text_service.get_words_explanations_stream(body.text, body.important_words_location):
+                words_info.append(word_info)
+                
+                # Create partial response
+                partial_response = WordsExplanationResponse(
+                    text=body.text,
+                    words_info=words_info
+                )
+                
+                # Send SSE event
+                event_data = f"data: {partial_response.model_dump_json()}\n\n"
+                yield event_data
+            
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            logger.error("Error in words explanation stream", error=str(e))
+            error_event = {
+                "error_code": "STREAM_001",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    logger.info("Starting word explanations stream", text_length=len(body.text), words_count=len(body.important_words_location))
+    
+    return StreamingResponse(
+        generate_explanations(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+@router.post(
+    "/get-more-explanations",
+    response_model=MoreExplanationsResponse,
+    summary="Get more examples for a word",
+    description="Generate 2 additional, simpler example sentences for a given word"
+)
+async def get_more_explanations(
+    request: Request,
+    body: MoreExplanationsRequest
+):
+    """Generate additional examples for a word."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "get-more-explanations")
+    
+    # Generate more examples
+    all_examples = await text_service.get_more_examples(body.word, body.meaning, body.examples)
+    
+    logger.info("Successfully generated more examples", word=body.word, total_examples=len(all_examples))
+    
+    return MoreExplanationsResponse(
+        word=body.word,
+        meaning=body.meaning,
+        examples=all_examples
+    )
+
+
+
+
+@router.get(
+    "/health/llm",
+    summary="Check LLM API health",
+    description="Test OpenAI API connection and return detailed diagnostics"
+)
+async def llm_health_check(request: Request):
+    """Check OpenAI API connection and return detailed diagnostics."""
+    try:
+        # Test OpenAI connection
+        is_connected = await openai_service.test_connection()
+
+        # Get configuration info (without exposing sensitive data)
+        api_key_configured = bool(settings.openai_api_key)
+        api_key_format_valid = (
+            settings.openai_api_key.startswith('sk-')
+            if settings.openai_api_key else False
+        )
+
+        # Create response with diagnostics
+        response_data = {
+            "status": "healthy" if is_connected else "unhealthy",
+            "openai_connection": is_connected,
+            "diagnostics": {
+                "api_key_configured": api_key_configured,
+                "api_key_format_valid": api_key_format_valid,
+                "api_key_length": len(settings.openai_api_key) if settings.openai_api_key else 0,
+                "api_key_preview": f"{settings.openai_api_key[:10]}...{settings.openai_api_key[-4:]}" if settings.openai_api_key and len(settings.openai_api_key) > 14 else "***",
+                "models_configured": {
+                    "gpt4_turbo": settings.gpt4_turbo_model,
+                    "gpt4o": settings.gpt4o_model
+                },
+                "timeout_settings": {
+                    "connection_timeout": 30.0,
+                    "read_timeout": 90.0
+                },
+                "environment_vars_loaded": {
+                    "openai_api_key": "OPENAI_API_KEY" in os.environ,
+                    "gpt4_turbo_model": "GPT4_TURBO_MODEL" in os.environ,
+                    "gpt4o_model": "GPT4O_MODEL" in os.environ
+                }
+            }
+        }
+
+        if is_connected:
+            logger.info("LLM health check passed")
+        else:
+            logger.error("LLM health check failed")
+
+        return response_data
+
+    except Exception as e:
+        logger.error("LLM health check error", error=str(e))
+        return {
+            "status": "error",
+            "error": str(e),
+            "error_type": type(e).__name__
+        }

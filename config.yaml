@@ -1,0 +1,49 @@
+# Caten API Configuration File
+# This file contains default configuration that can be overridden by environment variables
+
+server:
+  host: "0.0.0.0"
+  port: 8000
+  debug: false
+  log_level: "INFO"
+
+openai:
+#  gpt4_turbo_model: "gpt-4-turbo-2024-04-09"
+#  gpt4o_model: "gpt-4o"
+  gpt4_turbo_model: "gpt-4-turbo-2024-04-09"
+  gpt4o_model: "gpt-4"
+  max_tokens: 2000
+  temperature: 0.7
+
+file_upload:
+  max_size_mb: 5
+  allowed_image_types:
+    - "jpeg"
+    - "jpg" 
+    - "png"
+    - "heic"
+
+rate_limiting:
+  enabled: true
+  requests_per_minute: 60
+  redis_url: "redis://localhost:6379"
+
+monitoring:
+  enable_metrics: true
+  metrics_port: 9090
+  structured_logging: true
+
+tesseract:
+  cmd_path: "/usr/bin/tesseract"
+
+# API Documentation
+api:
+  title: "Caten API"
+  description: "FastAPI backend for text and image processing with LLM integration"
+  version: "1.0.0"
+  contact:
+    name: "Caten API Support"
+    email: "support@caten.ai"
+  license:
+    name: "MIT"
+    url: "https://opensource.org/licenses/MIT"

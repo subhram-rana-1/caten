@@ -36,6 +36,7 @@ class TextService:
                     length=word_with_location['length']
                 )
                 for word_with_location in words_with_location
+                if word_with_location['index'] > 0
             ]
             
             logger.info("Successfully extracted important words", count=len(word_with_locations))

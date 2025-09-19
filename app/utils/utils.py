@@ -12,7 +12,7 @@ def get_start_index_and_length_for_words_from_text(
         # Find the word starting from the current search position
         index = text.find(word, start_pos)
         if index == -1:
-            raise ValueError(f"Word '{word}' not found in text starting from index {start_pos}")
+            pass  # ignore if wrong word was generated
 
         result.append({
             "word": word,

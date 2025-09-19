@@ -340,11 +340,8 @@ class OpenAIService:
 
             generated_text = response.choices[0].message.content.strip()
             
-            # Basic validation - check if it's roughly the right length
+            # Count actual words for logging purposes only
             word_count_actual = len(generated_text.split())
-            if abs(word_count_actual - word_count) > 5:  # Allow some tolerance
-                logger.warning("Generated paragraph word count differs from requested", 
-                             requested=word_count, actual=word_count_actual)
 
             logger.info("Successfully generated random paragraph", 
                        word_count=word_count_actual, difficulty_percentage=difficulty_percentage)

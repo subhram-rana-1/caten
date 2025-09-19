@@ -36,6 +36,11 @@ monitoring:
 tesseract:
   cmd_path: "/usr/bin/tesseract"
 
+# Random Paragraph Configuration
+random_paragraph:
+  word_count: 50
+  difficulty_percentage: 60
+
 # API Documentation
 api:
   title: "Caten API"

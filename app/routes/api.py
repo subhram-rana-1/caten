@@ -16,7 +16,8 @@ from app.models import (
     WordsExplanationResponse,
     MoreExplanationsRequest,
     MoreExplanationsResponse,
-    WordInfo
+    WordInfo,
+    RandomParagraphResponse
 )
 from app.services.image_service import image_service
 from app.services.text_service import text_service
@@ -79,8 +80,6 @@ async def important_words_from_text(
     request: Request,
     body: ImportantWordsRequest
 ):
-    print(f'body -------> {body}')
-
     """Extract important words from text."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "important-words-from-text")
@@ -172,6 +171,28 @@ async def get_more_explanations(
     )
 
 
+@router.get(
+    "/get-random-paragraph",
+    response_model=RandomParagraphResponse,
+    summary="Generate random paragraph for vocabulary learning",
+    description="Generate a random paragraph with configurable word count and difficulty level to help users improve vocabulary skills"
+)
+async def get_random_paragraph(request: Request):
+    """Generate a random paragraph with difficult words for vocabulary learning."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "get-random-paragraph")
+    
+    # Generate random paragraph using LLM
+    generated_text = await openai_service.generate_random_paragraph(
+        word_count=settings.random_paragraph_word_count,
+        difficulty_percentage=settings.random_paragraph_difficulty_percentage
+    )
+    
+    logger.info("Successfully generated random paragraph", 
+               word_count=len(generated_text.split()),
+               difficulty_percentage=settings.random_paragraph_difficulty_percentage)
+    
+    return RandomParagraphResponse(text=generated_text)
 
 
 @router.get(

@@ -315,6 +315,47 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to generate more examples for word '{word}': {str(e)}")
 
+    async def generate_random_paragraph(self, word_count: int, difficulty_percentage: int) -> str:
+        """Generate a random paragraph with specified word count and difficulty level."""
+        try:
+            prompt = f"""Generate a random paragraph with exactly {word_count} words where {difficulty_percentage}% of the words are difficult to understand (advanced vocabulary).
+
+            Requirements:
+            - Exactly {word_count} words total
+            - {difficulty_percentage}% of words should be challenging/advanced vocabulary
+            - The remaining {100 - difficulty_percentage}% should be common, easy words
+            - Create a coherent, meaningful paragraph (not just a list of words)
+            - Choose a random topic (science, literature, history, technology, etc.)
+            - Make it educational and engaging for vocabulary learning
+            - Return only the paragraph text, no additional commentary or formatting
+            
+            The paragraph should help users improve their vocabulary skills by encountering challenging words in context."""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.max_tokens,
+                temperature=0.8  # Higher temperature for more creative/random content
+            )
+
+            generated_text = response.choices[0].message.content.strip()
+            
+            # Basic validation - check if it's roughly the right length
+            word_count_actual = len(generated_text.split())
+            if abs(word_count_actual - word_count) > 5:  # Allow some tolerance
+                logger.warning("Generated paragraph word count differs from requested", 
+                             requested=word_count, actual=word_count_actual)
+
+            logger.info("Successfully generated random paragraph", 
+                       word_count=word_count_actual, difficulty_percentage=difficulty_percentage)
+            return generated_text
+
+        except Exception as e:
+            logger.error("Failed to generate random paragraph", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate random paragraph: {str(e)}")
+
     async def _make_api_call(self, **kwargs):
         """Make an API call with robust error handling and retry logic."""
         max_retries = 3

@@ -83,3 +83,9 @@ class HealthCheckResponse(BaseModel):
     status: str = Field(..., description="Service status")
     version: str = Field(..., description="API version")
     timestamp: str = Field(..., description="Current timestamp")
+
+
+class RandomParagraphResponse(BaseModel):
+    """Response model for random paragraph generation."""
+    
+    text: str = Field(..., description="Generated random paragraph text")

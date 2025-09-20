@@ -160,6 +160,10 @@ class OpenAIService:
             \"\"\"{text}\"\"\"
 
             Important:
+            - All words must be present in the original text
+            - If fewer than 10 important words are found, return as many as possible
+            - Ensure the index corresponds to the first occurrence of the word in the text
+            - If a word appears multiple times, use the index of its first occurrence
             - Do not approximate or guess the index — it must match the position in the original text exactly
             - Return only the JSON array. No explanation, no code blocks, no markdown formatting
             """

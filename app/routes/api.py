@@ -3,7 +3,7 @@
 import json
 import os
 from typing import List
-from fastapi import APIRouter, UploadFile, File, Request, HTTPException
+from fastapi import APIRouter, UploadFile, File, Request, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 import structlog
 
@@ -145,6 +145,85 @@ async def words_explanation(
     )
 
 
+@router.websocket("/words-explanation-v2")
+async def words_explanation_websocket(websocket: WebSocket):
+    """WebSocket endpoint for streaming word explanations."""
+    await websocket.accept()
+    
+    try:
+        # Receive the request data
+        data = await websocket.receive_text()
+        request_data = json.loads(data)
+        
+        # Validate request data
+        try:
+            words_request = WordsExplanationRequest(**request_data)
+        except Exception as e:
+            error_response = {
+                "error_code": "VALIDATION_001",
+                "error_message": f"Invalid request data: {str(e)}"
+            }
+            await websocket.send_text(json.dumps(error_response))
+            await websocket.close()
+            return
+        
+        # Get client IP for rate limiting (WebSocket doesn't have Request object)
+        client_ip = websocket.client.host if websocket.client else "unknown"
+        await rate_limiter.check_rate_limit(client_ip, "words-explanation")
+        
+        logger.info("Starting WebSocket word explanations stream", 
+                   text_length=len(words_request.text), 
+                   words_count=len(words_request.important_words_location),
+                   client_ip=client_ip)
+        
+        # Stream word explanations as they become available
+        try:
+            async for word_info in text_service.get_words_explanations_stream(
+                words_request.text, 
+                words_request.important_words_location
+            ):
+                # Create response with only the current word info
+                single_word_response = {
+                    "word_info": word_info.model_dump()
+                }
+                
+                # Send WebSocket message for this individual word
+                await websocket.send_text(json.dumps(single_word_response))
+            
+            # Send final completion message
+            completion_response = {
+                "status": "completed",
+                "message": "All word explanations have been sent"
+            }
+            await websocket.send_text(json.dumps(completion_response))
+            
+        except Exception as e:
+            logger.error("Error in WebSocket words explanation stream", error=str(e))
+            error_response = {
+                "error_code": "STREAM_001",
+                "error_message": str(e)
+            }
+            await websocket.send_text(json.dumps(error_response))
+    
+    except WebSocketDisconnect:
+        logger.info("WebSocket client disconnected")
+    except Exception as e:
+        logger.error("WebSocket error", error=str(e))
+        try:
+            error_response = {
+                "error_code": "WEBSOCKET_001",
+                "error_message": f"WebSocket error: {str(e)}"
+            }
+            await websocket.send_text(json.dumps(error_response))
+        except:
+            pass  # Client might have already disconnected
+    finally:
+        try:
+            await websocket.close()
+        except:
+            pass  # Connection might already be closed
+
+
 @router.post(
     "/get-more-explanations",
     response_model=MoreExplanationsResponse,
@@ -163,7 +242,8 @@ async def get_more_explanations(
     all_examples = await text_service.get_more_examples(body.word, body.meaning, body.examples)
     
     logger.info("Successfully generated more examples", word=body.word, total_examples=len(all_examples))
-    
+
+    # f
     return MoreExplanationsResponse(
         word=body.word,
         meaning=body.meaning,

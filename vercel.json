@@ -39,11 +39,6 @@
       "dest": "app/main.py"
     }
   ],
-  "functions": {
-    "app/main.py": {
-      "maxDuration": 30
-    }
-  },
   "env": {
     "PYTHONPATH": "."
   },

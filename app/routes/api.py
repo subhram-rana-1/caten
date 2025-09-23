@@ -255,22 +255,35 @@ async def get_more_explanations(
     "/get-random-paragraph",
     response_model=RandomParagraphResponse,
     summary="Generate random paragraph for vocabulary learning",
-    description="Generate a random paragraph with configurable word count and difficulty level to help users improve vocabulary skills"
+    description="Generate a random paragraph with configurable word count and difficulty level to help users improve vocabulary skills. Accepts optional topics/keywords as query parameters."
 )
-async def get_random_paragraph(request: Request):
-    """Generate a random paragraph with difficult words for vocabulary learning."""
+async def get_random_paragraph(request: Request, topics: str = None):
+    """Generate a random paragraph with difficult words for vocabulary learning.
+    
+    Args:
+        topics: Optional comma-separated list of topics, keywords, or phrases to include in the paragraph.
+                Examples: "delicious", "Delicious lunch items", "technology,innovation", "science,space exploration"
+    """
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "get-random-paragraph")
     
+    # Parse topics/keywords from query parameter
+    parsed_topics = []
+    if topics:
+        # Split by comma and clean up each topic
+        parsed_topics = [topic.strip() for topic in topics.split(',') if topic.strip()]
+    
     # Generate random paragraph using LLM
-    generated_text = await openai_service.generate_random_paragraph(
-        word_count=settings.random_paragraph_word_count,
-        difficulty_percentage=settings.random_paragraph_difficulty_percentage
+    generated_text = await openai_service.generate_random_paragraph_with_topics(
+        topics=parsed_topics,
+        word_count=50,
+        difficulty_percentage=60
     )
     
     logger.info("Successfully generated random paragraph", 
                word_count=len(generated_text.split()),
-               difficulty_percentage=settings.random_paragraph_difficulty_percentage)
+               topics_provided=len(parsed_topics),
+               topics=parsed_topics)
     
     return RandomParagraphResponse(text=generated_text)
 

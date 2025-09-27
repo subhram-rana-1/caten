@@ -460,6 +460,109 @@ class OpenAIService:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
 
+    async def simplify_text(self, text: str, previous_simplified_texts: List[str]) -> str:
+        """Simplify text using OpenAI with context from previous simplifications."""
+        try:
+            # Build context from previous simplifications
+            context_section = ""
+            if previous_simplified_texts:
+                context_section = f"""
+            Previous simplified versions for reference:
+            {chr(10).join(f"- {simplified}" for simplified in previous_simplified_texts)}
+            
+            Use these previous versions to understand the level of simplification needed and generate an even simpler version.
+            """
+            else:
+                context_section = """
+            This is the first simplification attempt, so make it significantly easier to understand than the original.
+            """
+
+            prompt = f"""Simplify the following text to make it much easier to understand while preserving the core meaning and key information.
+
+            {context_section}
+
+            Original text:
+            "{text}"
+
+            Requirements:
+            - Make the text significantly easier to understand
+            - Use simpler vocabulary and shorter sentences
+            - Preserve all important information and meaning
+            - Maintain the same tone and style as appropriate
+            - If previous simplified versions exist, make this one even simpler
+            - Return only the simplified text, no additional commentary
+
+            Simplified text:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.max_tokens,
+                temperature=0.3
+            )
+
+            simplified_text = response.choices[0].message.content.strip()
+            
+            logger.info("Successfully simplified text", 
+                       original_length=len(text),
+                       simplified_length=len(simplified_text),
+                       has_previous_context=bool(previous_simplified_texts))
+            
+            return simplified_text
+
+        except Exception as e:
+            logger.error("Failed to simplify text", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to simplify text: {str(e)}")
+
+    async def generate_contextual_answer(self, question: str, chat_history: List[Dict[str, str]]) -> str:
+        """Generate contextual answer using chat history for ongoing conversations."""
+        try:
+            # Build messages from chat history
+            messages = []
+            
+            # Add system message for context
+            messages.append({
+                "role": "system", 
+                "content": "You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses."
+            })
+            
+            # Add chat history
+            for message in chat_history:
+                messages.append({
+                    "role": message["role"],
+                    "content": message["content"]
+                })
+            
+            # Add current question
+            messages.append({
+                "role": "user",
+                "content": question
+            })
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=messages,
+                max_tokens=settings.max_tokens,
+                temperature=0.7
+            )
+
+            answer = response.choices[0].message.content.strip()
+            
+            logger.info("Successfully generated contextual answer", 
+                       question_length=len(question),
+                       chat_history_length=len(chat_history),
+                       answer_length=len(answer))
+            
+            return answer
+
+        except Exception as e:
+            logger.error("Failed to generate contextual answer", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate contextual answer: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

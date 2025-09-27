@@ -167,43 +167,62 @@ async def words_explanation_v2(
 
 @router.post(
     "/simplify",
-    response_model=List[SimplifyResponse],
-    summary="Simplify text with context (v2)",
-    description="Generate simplified versions of texts using OpenAI API with previous context"
+    summary="Simplify text with context (v2) - SSE",
+    description="Generate simplified versions of texts using OpenAI API with previous context via Server-Sent Events"
 )
 async def simplify_v2(
     request: Request,
     body: List[SimplifyRequest]
 ):
-    """Simplify multiple texts with context from previous simplifications."""
+    """Simplify multiple texts with context from previous simplifications using SSE."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "simplify")
     
-    try:
-        results = []
-        
-        for text_obj in body:
-            # Generate simplified text using OpenAI
-            simplified_text = await openai_service.simplify_text(
-                text_obj.text, 
-                text_obj.previousSimplifiedTexts
-            )
+    async def generate_simplifications():
+        """Generate SSE stream of simplified texts."""
+        try:
+            for text_obj in body:
+                # Generate simplified text using OpenAI
+                simplified_text = await openai_service.simplify_text(
+                    text_obj.text, 
+                    text_obj.previousSimplifiedTexts
+                )
+                
+                result = SimplifyResponse(
+                    textStartIndex=text_obj.textStartIndex,
+                    textLength=text_obj.textLength,
+                    text=text_obj.text,
+                    previousSimplifiedTexts=text_obj.previousSimplifiedTexts,
+                    simplifiedText=simplified_text
+                )
+                
+                # Send SSE event for this individual simplification
+                event_data = f"data: {json.dumps(result.model_dump())}\n\n"
+                yield event_data
             
-            result = SimplifyResponse(
-                textStartIndex=text_obj.textStartIndex,
-                textLength=text_obj.textLength,
-                text=text_obj.text,
-                previousSimplifiedTexts=text_obj.previousSimplifiedTexts,
-                simplifiedText=simplified_text
-            )
-            results.append(result)
-        
-        logger.info("Successfully simplified texts", count=len(results))
-        return results
-        
-    except Exception as e:
-        logger.error("Failed to simplify texts", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to simplify texts: {str(e)}")
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            logger.error("Error in simplify v2 stream", error=str(e))
+            error_event = {
+                "error_code": "STREAM_002",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    logger.info("Starting text simplifications v2 stream", 
+               text_objects_count=len(body))
+    
+    return StreamingResponse(
+        generate_simplifications(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 @router.post(

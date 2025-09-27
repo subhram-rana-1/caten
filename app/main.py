@@ -124,7 +124,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 
 # Include routers
 app.include_router(health.router)
-app.include_router(api.router)
+app.include_router(v1_api.router)
 
 
 @app.get("/metrics", include_in_schema=False)

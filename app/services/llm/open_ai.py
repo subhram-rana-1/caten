@@ -470,26 +470,34 @@ class OpenAIService:
             Previous simplified versions for reference:
             {chr(10).join(f"- {simplified}" for simplified in previous_simplified_texts)}
             
-            Use these previous versions to understand the level of simplification needed and generate an even simpler version.
+            These previous versions are still too complex. Create a MUCH simpler version with:
+            - Even shorter sentences (5-8 words maximum)
+            - Even simpler words (basic vocabulary only)
+            - More broken-up sentence structure
+            - Avoid any complex phrases or grammar
             """
             else:
                 context_section = """
-            This is the first simplification attempt, so make it significantly easier to understand than the original.
+            This is the first simplification attempt. Make it EXTREMELY simple with very short sentences and basic words.
             """
 
-            prompt = f"""Simplify the following text to make it much easier to understand while preserving the core meaning and key information.
+            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
 
             {context_section}
 
             Original text:
             "{text}"
 
-            Requirements:
-            - Make the text significantly easier to understand
-            - Use simpler vocabulary and shorter sentences
-            - Preserve all important information and meaning
-            - Maintain the same tone and style as appropriate
-            - If previous simplified versions exist, make this one even simpler
+            CRITICAL REQUIREMENTS:
+            - Use ONLY basic, everyday words (like "big" instead of "enormous", "old" instead of "ancient")
+            - Write in VERY short, simple sentences (maximum 8-10 words per sentence)
+            - Use simple sentence patterns: Subject + Verb + Object
+            - Avoid complex grammar, clauses, and fancy words
+            - Break long ideas into multiple short sentences
+            - Use common words that a 10-year-old would understand
+            - If previous simplified versions exist, make this one MUCH simpler with even shorter sentences
+            - Replace complex phrases with simple ones (e.g., "as if" → "like", "in order to" → "to")
+            - Use active voice instead of passive voice
             - Return only the simplified text, no additional commentary
 
             Simplified text:"""

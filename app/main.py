@@ -16,7 +16,7 @@ from app.exceptions import (
     general_exception_handler,
     http_exception_handler
 )
-from app.routes import api, health
+from app.routes import v1_api, health
 from app.services.rate_limiter import rate_limiter
 
 # Configure structured logging

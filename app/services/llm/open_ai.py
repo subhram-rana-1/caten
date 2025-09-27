@@ -524,23 +524,29 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to simplify text: {str(e)}")
 
-    async def generate_contextual_answer(self, question: str, chat_history: List[Dict[str, str]]) -> str:
+    async def generate_contextual_answer(self, question: str, chat_history: List, initial_context: Optional[str] = None) -> str:
         """Generate contextual answer using chat history for ongoing conversations."""
         try:
             # Build messages from chat history
             messages = []
             
             # Add system message for context
+            system_content = "You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses."
+            
+            # Add initial context if provided
+            if initial_context:
+                system_content += f"\n\nInitial Context: {initial_context}\n\nPlease use this context to provide more informed and relevant answers to questions about this topic."
+            
             messages.append({
                 "role": "system", 
-                "content": "You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses."
+                "content": system_content
             })
             
             # Add chat history
             for message in chat_history:
                 messages.append({
-                    "role": message["role"],
-                    "content": message["content"]
+                    "role": message.role,
+                    "content": message.content
                 })
             
             # Add current question
@@ -561,7 +567,8 @@ class OpenAIService:
             logger.info("Successfully generated contextual answer", 
                        question_length=len(question),
                        chat_history_length=len(chat_history),
-                       answer_length=len(answer))
+                       answer_length=len(answer),
+                       has_initial_context=bool(initial_context))
             
             return answer
 

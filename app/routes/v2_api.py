@@ -84,12 +84,12 @@ class AskRequest(BaseModel):
     
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatMessage] = Field(default=[], description="Previous chat history for context")
+    initial_context: Optional[str] = Field(default=None, max_length=10000, description="Initial context or background information that the AI should be aware of")
 
 
 class AskResponse(BaseModel):
     """Response model for ask API."""
     
-    answer: str = Field(..., description="AI's answer to the question")
     chat_history: List[ChatMessage] = Field(..., description="Updated chat history including the new Q&A")
 
 
@@ -239,7 +239,7 @@ async def important_words_from_text_v2(
     "/ask",
     response_model=AskResponse,
     summary="Contextual Q&A (v2)",
-    description="Ask questions with full chat history context for ongoing conversations"
+    description="Ask questions with full chat history context and optional initial context for ongoing conversations. Provide initial context to give the AI background information about a topic."
 )
 async def ask_v2(
     request: Request,
@@ -250,10 +250,11 @@ async def ask_v2(
     await rate_limiter.check_rate_limit(client_id, "ask")
     
     try:
-        # Generate answer using OpenAI with chat history
+        # Generate answer using OpenAI with chat history and initial context
         answer = await openai_service.generate_contextual_answer(
             body.question, 
-            body.chat_history
+            body.chat_history,
+            body.initial_context
         )
         
         # Update chat history
@@ -266,7 +267,6 @@ async def ask_v2(
                    chat_history_length=len(updated_history))
         
         return AskResponse(
-            answer=answer,
             chat_history=updated_history
         )
         

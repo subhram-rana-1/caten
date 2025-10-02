@@ -460,6 +460,124 @@ class OpenAIService:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
 
+    async def simplify_text(self, text: str, previous_simplified_texts: List[str]) -> str:
+        """Simplify text using OpenAI with context from previous simplifications."""
+        try:
+            # Build context from previous simplifications
+            context_section = ""
+            if previous_simplified_texts:
+                context_section = f"""
+            Previous simplified versions for reference:
+            {chr(10).join(f"- {simplified}" for simplified in previous_simplified_texts)}
+            
+            These previous versions are still too complex. Create a MUCH simpler version with:
+            - Even shorter sentences (5-8 words maximum)
+            - Even simpler words (basic vocabulary only)
+            - More broken-up sentence structure
+            - Avoid any complex phrases or grammar
+            """
+            else:
+                context_section = """
+            This is the first simplification attempt. Make it EXTREMELY simple with very short sentences and basic words.
+            """
+
+            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
+
+            {context_section}
+
+            Original text:
+            "{text}"
+
+            CRITICAL REQUIREMENTS:
+            - Use ONLY basic, everyday words (like "big" instead of "enormous", "old" instead of "ancient")
+            - Write in VERY short, simple sentences (maximum 8-10 words per sentence)
+            - Use simple sentence patterns: Subject + Verb + Object
+            - Avoid complex grammar, clauses, and fancy words
+            - Break long ideas into multiple short sentences
+            - Use common words that a 10-year-old would understand
+            - If previous simplified versions exist, make this one MUCH simpler with even shorter sentences
+            - Replace complex phrases with simple ones (e.g., "as if" → "like", "in order to" → "to")
+            - Use active voice instead of passive voice
+            - Return only the simplified text, no additional commentary
+
+            Simplified text:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.max_tokens,
+                temperature=0.3
+            )
+
+            simplified_text = response.choices[0].message.content.strip()
+            
+            logger.info("Successfully simplified text", 
+                       original_length=len(text),
+                       simplified_length=len(simplified_text),
+                       has_previous_context=bool(previous_simplified_texts))
+            
+            return simplified_text
+
+        except Exception as e:
+            logger.error("Failed to simplify text", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to simplify text: {str(e)}")
+
+    async def generate_contextual_answer(self, question: str, chat_history: List, initial_context: Optional[str] = None) -> str:
+        """Generate contextual answer using chat history for ongoing conversations."""
+        try:
+            # Build messages from chat history
+            messages = []
+            
+            # Add system message for context
+            system_content = "You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses."
+            
+            # Add initial context if provided
+            if initial_context:
+                system_content += f"\n\nInitial Context: {initial_context}\n\nPlease use this context to provide more informed and relevant answers to questions about this topic."
+            
+            messages.append({
+                "role": "system", 
+                "content": system_content
+            })
+            
+            # Add chat history
+            for message in chat_history:
+                messages.append({
+                    "role": message.role,
+                    "content": message.content
+                })
+            
+            # Add current question
+            messages.append({
+                "role": "user",
+                "content": question
+            })
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=messages,
+                max_tokens=settings.max_tokens,
+                temperature=0.7
+            )
+
+            answer = response.choices[0].message.content.strip()
+            
+            logger.info("Successfully generated contextual answer", 
+                       question_length=len(question),
+                       chat_history_length=len(chat_history),
+                       answer_length=len(answer),
+                       has_initial_context=bool(initial_context))
+            
+            return answer
+
+        except Exception as e:
+            logger.error("Failed to generate contextual answer", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate contextual answer: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

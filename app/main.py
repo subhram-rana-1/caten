@@ -4,9 +4,8 @@ import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import RedirectResponse, Response
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
-from fastapi.responses import Response
 import time
 
 from app.config import settings
@@ -16,7 +15,7 @@ from app.exceptions import (
     general_exception_handler,
     http_exception_handler
 )
-from app.routes import api, health
+from app.routes import v1_api, v2_api, health
 from app.services.rate_limiter import rate_limiter
 
 # Configure structured logging
@@ -69,9 +68,51 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],  # Configure appropriately for production
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
+    allow_headers=[
+        "Accept",
+        "Accept-Language",
+        "Content-Language",
+        "Content-Type",
+        "Authorization",
+        "X-Requested-With",
+        "X-CSRFToken",
+        "X-Forwarded-For",
+        "User-Agent",
+        "Origin",
+        "Referer",
+        "Cache-Control",
+        "Pragma"
+    ],
+    expose_headers=[
+        "Content-Length",
+        "Content-Type",
+        "Cache-Control",
+        "X-Accel-Buffering"
+    ],
+    max_age=3600,  # Cache preflight response for 1 hour
 )
+
+
+@app.middleware("http")
+async def cors_preflight_handler(request: Request, call_next):
+    """Handle CORS preflight requests explicitly for Chrome extensions."""
+    if request.method == "OPTIONS":
+        response = Response()
+        response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma"
+        response.headers["Access-Control-Max-Age"] = "3600"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        return response
+    
+    response = await call_next(request)
+    
+    # Add CORS headers to all responses
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    
+    return response
 
 
 @app.middleware("http")
@@ -124,7 +165,8 @@ app.add_exception_handler(Exception, general_exception_handler)
 
 # Include routers
 app.include_router(health.router)
-app.include_router(api.router)
+app.include_router(v1_api.router)
+app.include_router(v2_api.router)
 
 
 @app.get("/metrics", include_in_schema=False)

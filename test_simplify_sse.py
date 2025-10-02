@@ -71,6 +71,7 @@ async def test_simplify_sse():
                                     print(f"   - text: {event_data.get('text', '')[:50]}...")
                                     print(f"   - simplifiedText: {event_data.get('simplifiedText', '')[:50]}...")
                                     print(f"   - previousSimplifiedTexts count: {len(event_data.get('previousSimplifiedTexts', []))}")
+                                    print(f"   - shouldAllowSimplifyMore: {event_data.get('shouldAllowSimplifyMore')}")
                                     print()
                                 except json.JSONDecodeError as e:
                                     print(f"❌ Failed to parse JSON: {e}")

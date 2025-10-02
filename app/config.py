@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     random_paragraph_word_count: int = Field(default=50, description="Number of words in random paragraph")
     random_paragraph_difficulty_percentage: int = Field(default=60, description="Percentage of difficult words in random paragraph")
     
+    # Text Simplification Configuration
+    max_simplification_attempts: int = Field(default=1, description="Maximum number of simplification attempts allowed")
+    
     # Monitoring
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=9090, description="Metrics server port")

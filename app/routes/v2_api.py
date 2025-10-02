@@ -55,6 +55,7 @@ class SimplifyResponse(BaseModel):
     text: str = Field(..., description="Original text")
     previousSimplifiedTexts: List[str] = Field(..., description="Previous simplified versions")
     simplifiedText: str = Field(..., description="New simplified text")
+    shouldAllowSimplifyMore: bool = Field(..., description="Whether more simplification attempts are allowed")
 
 
 class ImportantWordsV2Request(BaseModel):
@@ -188,12 +189,16 @@ async def simplify_v2(
                     text_obj.previousSimplifiedTexts
                 )
                 
+                # Calculate if more simplification attempts are allowed
+                should_allow_simplify_more = len(text_obj.previousSimplifiedTexts) < settings.max_simplification_attempts
+                
                 result = SimplifyResponse(
                     textStartIndex=text_obj.textStartIndex,
                     textLength=text_obj.textLength,
                     text=text_obj.text,
                     previousSimplifiedTexts=text_obj.previousSimplifiedTexts,
-                    simplifiedText=simplified_text
+                    simplifiedText=simplified_text,
+                    shouldAllowSimplifyMore=should_allow_simplify_more
                 )
                 
                 # Send SSE event for this individual simplification

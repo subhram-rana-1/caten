@@ -241,13 +241,16 @@ async def get_more_explanations(
     # Generate more examples
     all_examples = await text_service.get_more_examples(body.word, body.meaning, body.examples)
     
-    logger.info("Successfully generated more examples", word=body.word, total_examples=len(all_examples))
+    # Determine if more examples can be fetched based on current count
+    should_allow_fetch_more = len(all_examples) <= settings.more_examples_threshold
+    
+    logger.info("Successfully generated more examples", word=body.word, total_examples=len(all_examples), should_allow_fetch_more=should_allow_fetch_more)
 
-    # f
     return MoreExplanationsResponse(
         word=body.word,
         meaning=body.meaning,
-        examples=all_examples
+        examples=all_examples,
+        shouldAllowFetchMoreExamples=should_allow_fetch_more
     )
 
 

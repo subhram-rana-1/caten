@@ -69,6 +69,7 @@ class MoreExplanationsResponse(BaseModel):
     word: str = Field(..., description="The word")
     meaning: str = Field(..., description="The meaning of the word")
     examples: List[str] = Field(..., min_items=4, max_items=4, description="Four example sentences (2 original + 2 new)")
+    shouldAllowFetchMoreExamples: bool = Field(..., description="Whether more examples can be fetched based on current examples count")
 
 
 class ImageToTextResponse(BaseModel):

@@ -41,6 +41,10 @@ random_paragraph:
   word_count: 50
   difficulty_percentage: 60
 
+# Text Simplification Configuration
+text_simplification:
+  max_attempts: 1
+
 # API Documentation
 api:
   title: "Caten API"

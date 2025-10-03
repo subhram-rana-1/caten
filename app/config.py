@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # Text Simplification Configuration
     max_simplification_attempts: int = Field(default=1, description="Maximum number of simplification attempts allowed")
     
+    # More Examples Configuration
+    more_examples_threshold: int = Field(default=2, description="Maximum number of examples to allow fetching more examples")
+    
     # Monitoring
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=9090, description="Metrics server port")

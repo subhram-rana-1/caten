@@ -29,13 +29,19 @@ class Settings(BaseSettings):
     redis_url: str = Field(default="redis://localhost:6379", description="Redis URL for rate limiting")
     
     # File Upload Configuration
-    max_file_size_mb: int = Field(default=5, description="Maximum file size in MB")
+    max_file_size_mb: int = Field(default=2, description="Maximum file size in MB")
     allowed_image_types: str = Field(default="jpeg,jpg,png,heic", description="Allowed image types")
+    allowed_pdf_types: str = Field(default="pdf", description="Allowed PDF types")
     
     @property
     def allowed_image_types_list(self) -> List[str]:
         """Get allowed image types as a list."""
         return [ext.strip().lower() for ext in self.allowed_image_types.split(",")]
+    
+    @property
+    def allowed_pdf_types_list(self) -> List[str]:
+        """Get allowed PDF types as a list."""
+        return [ext.strip().lower() for ext in self.allowed_pdf_types.split(",")]
     
     @property
     def max_file_size_bytes(self) -> int:

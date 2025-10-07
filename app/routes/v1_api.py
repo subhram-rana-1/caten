@@ -10,6 +10,7 @@ import structlog
 from app.config import settings
 from app.models import (
     ImageToTextResponse,
+    PdfToTextResponse,
     ImportantWordsRequest,
     ImportantWordsResponse,
     WordsExplanationRequest,
@@ -20,6 +21,7 @@ from app.models import (
     RandomParagraphResponse
 )
 from app.services.image_service import image_service
+from app.services.pdf_service import pdf_service
 from app.services.text_service import text_service
 from app.services.llm.open_ai import openai_service
 from app.services.rate_limiter import rate_limiter
@@ -68,6 +70,47 @@ async def image_to_text(
     logger.info("Successfully extracted text from image", filename=file.filename, text_length=len(extracted_text))
     
     return ImageToTextResponse(text=extracted_text)
+
+
+@router.post(
+    "/pdf-to-text",
+    response_model=PdfToTextResponse,
+    summary="Extract text from PDF",
+    description="Extract readable text from an uploaded PDF file and return it in markdown format. Maximum file size: 2MB"
+)
+async def pdf_to_text(
+    request: Request,
+    file: UploadFile = File(..., description="PDF file to extract text from (max 2MB)")
+):
+    """Extract text from an uploaded PDF and return in markdown format."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "pdf-to-text")
+    
+    if not file.filename:
+        raise FileValidationError("No file uploaded")
+    
+    # Check file size before reading (more efficient for large files)
+    if hasattr(file, 'size') and file.size:
+        max_size_mb = settings.max_file_size_bytes // (1024 * 1024)
+        if file.size > settings.max_file_size_bytes:
+            file_size_mb = file.size / (1024 * 1024)
+            raise FileValidationError(
+                f"PDF file size {file_size_mb:.2f}MB exceeds maximum allowed size of {max_size_mb}MB. "
+                f"Please upload a smaller PDF file."
+            )
+    
+    # Read file data
+    file_data = await file.read()
+    
+    # Validate and process PDF
+    processed_pdf_data, pdf_format = pdf_service.validate_pdf_file(file_data, file.filename)
+    
+    # Extract text from PDF
+    extracted_text = pdf_service.extract_text_from_pdf(processed_pdf_data)
+    
+    logger.info("Successfully extracted text from PDF", filename=file.filename, text_length=len(extracted_text))
+    
+    return PdfToTextResponse(text=extracted_text)
 
 
 @router.post(

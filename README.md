@@ -5,6 +5,7 @@ A FastAPI-based backend server for text and image processing with LLM integratio
 ## Features
 
 - **Image to Text**: Extract readable text from images using GPT-4 Turbo with Vision
+- **PDF to Text**: Extract readable text from PDF files and return in markdown format
 - **Important Words Analysis**: Identify the most important/difficult words in text
 - **Word Explanations**: Get contextual meanings and examples with SSE streaming
 - **Additional Examples**: Generate more simplified examples for words
@@ -20,17 +21,24 @@ A FastAPI-based backend server for text and image processing with LLM integratio
 - Maximum file size: 5MB
 - Handles rotated/tilted images and transparent overlays
 
-### 2. Get Important Words
+### 2. Extract Text from PDF
+- **POST** `/api/v1/pdf-to-text`
+- Upload a PDF file to extract text in markdown format
+- Maximum file size: 2MB
+- Supports multi-page PDFs with proper formatting
+- Returns structured markdown content
+
+### 3. Get Important Words
 - **POST** `/api/v1/important-words-from-text`
 - Analyze text to find the top 10 most important/difficult words
 - Returns word positions in the original text
 
-### 3. Get Word Explanations (Streaming)
+### 4. Get Word Explanations (Streaming)
 - **POST** `/api/v1/words-explanation`
 - Stream contextual meanings and examples via Server-Sent Events
 - Concurrent processing for multiple words
 
-### 4. Get More Examples
+### 5. Get More Examples
 - **POST** `/api/v1/get-more-explanations`
 - Generate additional simplified example sentences for a word
 
@@ -42,6 +50,7 @@ A FastAPI-based backend server for text and image processing with LLM integratio
 - OpenAI API key
 - Redis (for rate limiting)
 - Tesseract OCR (for image processing)
+- PyPDF2 and pdfplumber (for PDF processing)
 
 ### Installation
 

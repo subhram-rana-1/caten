@@ -260,15 +260,36 @@ async def get_more_explanations(
     summary="Generate random paragraph for vocabulary learning",
     description="Generate a random paragraph with configurable word count and difficulty level to help users improve vocabulary skills. Accepts optional topics/keywords as query parameters."
 )
-async def get_random_paragraph(request: Request, topics: str = None):
+async def get_random_paragraph(
+    request: Request, 
+    topics: str = None,
+    difficulty_level: str = "hard",
+    word_count: int = 100
+):
     """Generate a random paragraph with difficult words for vocabulary learning.
     
     Args:
         topics: Optional comma-separated list of topics, keywords, or phrases to include in the paragraph.
                 Examples: "delicious", "Delicious lunch items", "technology,innovation", "science,space exploration"
+        difficulty_level: Difficulty level for the paragraph. Allowed values: "easy", "medium", "hard". Default: "hard"
+        word_count: Number of words in the paragraph. Range: 1-500. Default: 100
     """
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "get-random-paragraph")
+    
+    # Validate difficulty_level parameter
+    if difficulty_level not in ["easy", "medium", "hard"]:
+        raise HTTPException(
+            status_code=400, 
+            detail="difficulty_level must be one of: 'easy', 'medium', 'hard'"
+        )
+    
+    # Validate word_count parameter
+    if word_count < 1 or word_count > 500:
+        raise HTTPException(
+            status_code=400, 
+            detail="word_count must be between 1 and 500"
+        )
     
     # Parse topics/keywords from query parameter
     parsed_topics = []
@@ -276,15 +297,26 @@ async def get_random_paragraph(request: Request, topics: str = None):
         # Split by comma and clean up each topic
         parsed_topics = [topic.strip() for topic in topics.split(',') if topic.strip()]
     
+    # Map difficulty level to percentage
+    difficulty_mapping = {
+        "easy": 30,
+        "medium": 50,
+        "hard": 70
+    }
+    difficulty_percentage = difficulty_mapping[difficulty_level]
+    
     # Generate random paragraph using LLM
     generated_text = await openai_service.generate_random_paragraph_with_topics(
         topics=parsed_topics,
-        word_count=50,
-        difficulty_percentage=60
+        word_count=word_count,
+        difficulty_percentage=difficulty_percentage
     )
     
     logger.info("Successfully generated random paragraph", 
                word_count=len(generated_text.split()),
+               requested_word_count=word_count,
+               difficulty_level=difficulty_level,
+               difficulty_percentage=difficulty_percentage,
                topics_provided=len(parsed_topics),
                topics=parsed_topics)
     

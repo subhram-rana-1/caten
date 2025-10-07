@@ -322,16 +322,17 @@ class OpenAIService:
     async def generate_random_paragraph(self, word_count: int, difficulty_percentage: int) -> str:
         """Generate a random paragraph with specified word count and difficulty level."""
         try:
-            prompt = f"""Generate a random paragraph with exactly {word_count} words where {difficulty_percentage}% of the words are difficult to understand (advanced vocabulary).
+            prompt = f"""Generate a random paragraph with approximately {word_count} words where {difficulty_percentage}% of the words are difficult to understand (advanced vocabulary).
 
             Requirements:
-            - Exactly {word_count} words total
+            - Target approximately {word_count} words (don't worry about exact count)
             - {difficulty_percentage}% of words should be challenging/advanced vocabulary
             - The remaining {100 - difficulty_percentage}% should be common, easy words
             - Create a coherent, meaningful paragraph (not just a list of words)
             - Choose a random topic (science, literature, history, technology, etc.)
             - Make it educational and engaging for vocabulary learning
             - Return only the paragraph text, no additional commentary or formatting
+            - Focus on natural flow and coherence rather than exact word count
             
             The paragraph should help users improve their vocabulary skills by encountering challenging words in context."""
 
@@ -374,17 +375,17 @@ class OpenAIService:
             - Choose any random topic (science, literature, history, technology, nature, etc.)
             - Make it interesting and educational"""
 
-            prompt = f"""Generate a random paragraph with exactly {word_count} words where {difficulty_percentage}% of the words are difficult to understand (advanced vocabulary).
+            prompt = f"""Generate a random paragraph with approximately {word_count} words where {difficulty_percentage}% of the words are difficult to understand (advanced vocabulary).
             {topics_section}
 
             Requirements:
-            - Exactly {word_count} words total
+            - Target approximately {word_count} words (don't worry about exact count)
             - {difficulty_percentage}% of words should be challenging/advanced vocabulary
             - The remaining {100 - difficulty_percentage}% should be common, easy words
             - Create a coherent, meaningful paragraph (not just a list of words)
             - Make it educational and engaging for vocabulary learning
             - Return only the paragraph text, no additional commentary or formatting
-            - Do not count words or verify the criteria - just generate naturally
+            - Focus on natural flow and coherence rather than exact word count
             
             The paragraph should help users improve their vocabulary skills by encountering challenging words in context."""
 

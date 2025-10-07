@@ -78,6 +78,12 @@ class ImageToTextResponse(BaseModel):
     text: str = Field(..., description="Extracted text from the image")
 
 
+class PdfToTextResponse(BaseModel):
+    """Response model for PDF to text conversion."""
+    
+    text: str = Field(..., description="Extracted text from the PDF in markdown format")
+
+
 class HealthCheckResponse(BaseModel):
     """Response model for health check."""
     

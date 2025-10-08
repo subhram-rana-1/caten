@@ -67,9 +67,12 @@ async def image_to_text(
     # Extract text using LLM
     extracted_text = await openai_service.extract_text_from_image(processed_image_data, image_format)
     
-    logger.info("Successfully extracted text from image", filename=file.filename, text_length=len(extracted_text))
+    # Generate topic name for the extracted text
+    topic_name = await openai_service.generate_topic_name(extracted_text)
     
-    return ImageToTextResponse(text=extracted_text)
+    logger.info("Successfully extracted text from image", filename=file.filename, text_length=len(extracted_text), topic_name=topic_name)
+    
+    return ImageToTextResponse(text=extracted_text, topicName=topic_name)
 
 
 @router.post(
@@ -108,9 +111,12 @@ async def pdf_to_text(
     # Extract text from PDF
     extracted_text = pdf_service.extract_text_from_pdf(processed_pdf_data)
     
-    logger.info("Successfully extracted text from PDF", filename=file.filename, text_length=len(extracted_text))
+    # Generate topic name for the extracted text
+    topic_name = await openai_service.generate_topic_name(extracted_text)
     
-    return PdfToTextResponse(text=extracted_text)
+    logger.info("Successfully extracted text from PDF", filename=file.filename, text_length=len(extracted_text), topic_name=topic_name)
+    
+    return PdfToTextResponse(text=extracted_text, topicName=topic_name)
 
 
 @router.post(
@@ -355,15 +361,19 @@ async def get_random_paragraph(
         difficulty_percentage=difficulty_percentage
     )
     
+    # Generate topic name for the generated paragraph
+    topic_name = await openai_service.generate_topic_name(generated_text)
+    
     logger.info("Successfully generated random paragraph", 
                word_count=len(generated_text.split()),
                requested_word_count=word_count,
                difficulty_level=difficulty_level,
                difficulty_percentage=difficulty_percentage,
                topics_provided=len(parsed_topics),
-               topics=parsed_topics)
+               topics=parsed_topics,
+               topic_name=topic_name)
     
-    return RandomParagraphResponse(text=generated_text)
+    return RandomParagraphResponse(text=generated_text, topicName=topic_name)
 
 
 @router.get(

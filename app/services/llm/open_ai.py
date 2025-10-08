@@ -579,6 +579,64 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to generate contextual answer: {str(e)}")
 
+    async def generate_topic_name(self, text: str) -> str:
+        """Generate a concise topic name (ideally 3 words) for the given text."""
+        try:
+            prompt = f"""Analyze the following text and generate a concise topic name that captures its main subject or theme.
+
+            Text:
+            "{text}"
+
+            Requirements:
+            - Generate a topic name that is ideally 3 words or less
+            - Use descriptive, meaningful words that capture the essence of the content
+            - Make it concise but informative
+            - Use title case (capitalize first letter of each word)
+            - Avoid generic terms like "text", "content", "document"
+            - Focus on the main subject, theme, or domain of the text
+            - Return only the topic name, no additional text or explanation
+
+            Examples of good topic names:
+            - "Machine Learning"
+            - "Climate Change"
+            - "Ancient History"
+            - "Financial Markets"
+            - "Space Exploration"
+            - "Medical Research"
+            - "Art History"
+            - "Renewable Energy"
+
+            Topic name:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=50,  # Short response needed
+                temperature=0.3
+            )
+
+            topic_name = response.choices[0].message.content.strip()
+            
+            # Clean up the response - remove any extra text and ensure proper formatting
+            topic_name = topic_name.replace('"', '').replace("'", '').strip()
+            
+            # Ensure it's not too long (max 3 words)
+            words = topic_name.split()
+            if len(words) > 3:
+                topic_name = ' '.join(words[:3])
+            
+            logger.info("Successfully generated topic name", 
+                       text_length=len(text),
+                       topic_name=topic_name)
+            
+            return topic_name
+
+        except Exception as e:
+            logger.error("Failed to generate topic name", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate topic name: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

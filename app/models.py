@@ -76,12 +76,14 @@ class ImageToTextResponse(BaseModel):
     """Response model for image to text conversion."""
     
     text: str = Field(..., description="Extracted text from the image")
+    topicName: str = Field(..., description="Generated topic name for the extracted text")
 
 
 class PdfToTextResponse(BaseModel):
     """Response model for PDF to text conversion."""
     
     text: str = Field(..., description="Extracted text from the PDF in markdown format")
+    topicName: str = Field(..., description="Generated topic name for the extracted text")
 
 
 class HealthCheckResponse(BaseModel):
@@ -96,3 +98,4 @@ class RandomParagraphResponse(BaseModel):
     """Response model for random paragraph generation."""
     
     text: str = Field(..., description="Generated random paragraph text")
+    topicName: str = Field(..., description="Generated topic name for the paragraph")

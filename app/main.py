@@ -82,13 +82,22 @@ app.add_middleware(
         "Origin",
         "Referer",
         "Cache-Control",
-        "Pragma"
+        "Pragma",
+        "Content-Disposition",
+        "Content-Transfer-Encoding",
+        "X-File-Name",
+        "X-File-Size",
+        "X-File-Type"
     ],
     expose_headers=[
         "Content-Length",
         "Content-Type",
         "Cache-Control",
-        "X-Accel-Buffering"
+        "X-Accel-Buffering",
+        "Content-Disposition",
+        "Access-Control-Allow-Origin",
+        "Access-Control-Allow-Methods",
+        "Access-Control-Allow-Headers"
     ],
     max_age=3600,  # Cache preflight response for 1 hour
 )
@@ -96,14 +105,15 @@ app.add_middleware(
 
 @app.middleware("http")
 async def cors_preflight_handler(request: Request, call_next):
-    """Handle CORS preflight requests explicitly for Chrome extensions."""
+    """Handle CORS preflight requests explicitly for Chrome extensions and file uploads."""
     if request.method == "OPTIONS":
         response = Response()
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type"
         response.headers["Access-Control-Max-Age"] = "3600"
         response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers"
         return response
     
     response = await call_next(request)
@@ -111,6 +121,7 @@ async def cors_preflight_handler(request: Request, call_next):
     # Add CORS headers to all responses
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers"
     
     return response
 

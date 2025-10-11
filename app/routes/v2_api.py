@@ -4,7 +4,7 @@ import json
 import os
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 import structlog
 
 from app.config import settings
@@ -92,6 +92,13 @@ class AskResponse(BaseModel):
     """Response model for ask API."""
     
     chat_history: List[ChatMessage] = Field(..., description="Updated chat history including the new Q&A")
+
+
+class PronunciationRequest(BaseModel):
+    """Request model for word pronunciation API."""
+    
+    word: str = Field(..., min_length=1, max_length=100, description="Word to generate pronunciation for")
+    voice: Optional[str] = Field(default="nova", description="Voice to use (alloy, echo, fable, onyx, nova, shimmer). Default is 'nova' for sweet-toned American female voice")
 
 
 async def get_client_id(request: Request) -> str:
@@ -297,3 +304,53 @@ async def ask_v2(
     except Exception as e:
         logger.error("Failed to generate contextual answer", error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+
+
+@router.post(
+    "/pronunciation",
+    summary="Generate word pronunciation audio (v2)",
+    description="Generate pronunciation audio for a single word using OpenAI TTS with a sweet-toned American female voice"
+)
+async def get_pronunciation(
+    request: Request,
+    body: PronunciationRequest
+):
+    """Generate pronunciation audio for a word."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "pronunciation")
+    
+    try:
+        # Validate voice parameter
+        valid_voices = ["alloy", "echo", "fable", "onyx", "nova", "shimmer"]
+        if body.voice and body.voice not in valid_voices:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid voice. Must be one of: {', '.join(valid_voices)}"
+            )
+        
+        # Generate pronunciation audio
+        audio_bytes = await openai_service.generate_pronunciation_audio(
+            body.word,
+            body.voice or "nova"
+        )
+        
+        logger.info("Successfully generated pronunciation audio",
+                   word=body.word,
+                   voice=body.voice,
+                   audio_size=len(audio_bytes))
+        
+        # Return audio file
+        return Response(
+            content=audio_bytes,
+            media_type="audio/mpeg",
+            headers={
+                "Content-Disposition": f'inline; filename="{body.word}_pronunciation.mp3"',
+                "Cache-Control": "public, max-age=86400"  # Cache for 24 hours
+            }
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to generate pronunciation", word=body.word, error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to generate pronunciation: {str(e)}")

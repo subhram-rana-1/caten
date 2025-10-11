@@ -11,6 +11,7 @@ from openai import AsyncOpenAI
 import structlog
 from PIL import Image
 import io
+from pydub import AudioSegment
 
 from app.config import settings
 from app.exceptions import LLMServiceError
@@ -636,6 +637,66 @@ class OpenAIService:
             if isinstance(e, LLMServiceError):
                 raise
             raise LLMServiceError(f"Failed to generate topic name: {str(e)}")
+
+    async def generate_pronunciation_audio(self, word: str, voice: str = "nova", boost_volume_db: float = 8.0) -> bytes:
+        """Generate pronunciation audio for a word using OpenAI TTS with volume boost.
+        
+        Args:
+            word: The word to generate pronunciation for
+            voice: The voice to use (alloy, echo, fable, onyx, nova, shimmer)
+                  Default is 'nova' for a sweet-toned American female voice
+            boost_volume_db: Volume boost in decibels (default: 8.0 dB for better audibility)
+        
+        Returns:
+            Audio data as bytes (MP3 format) with boosted volume
+        """
+        try:
+            logger.info("Generating pronunciation audio", word=word, voice=voice, volume_boost=boost_volume_db)
+            
+            # Use OpenAI's text-to-speech API with HD model for better quality
+            response = await self.client.audio.speech.create(
+                model="tts-1-hd",  # HD model for better quality
+                voice=voice,
+                input=word,
+                response_format="mp3"
+            )
+            
+            # Get the audio content
+            original_audio_bytes = response.content
+            
+            # Boost volume using pydub
+            try:
+                # Load audio from bytes
+                audio = AudioSegment.from_mp3(io.BytesIO(original_audio_bytes))
+                
+                # Increase volume by specified dB
+                boosted_audio = audio + boost_volume_db
+                
+                # Export back to MP3 bytes
+                output_buffer = io.BytesIO()
+                boosted_audio.export(output_buffer, format="mp3", bitrate="128k")
+                audio_bytes = output_buffer.getvalue()
+                
+                logger.info("Successfully generated and boosted pronunciation audio", 
+                           word=word, 
+                           voice=voice,
+                           original_size=len(original_audio_bytes),
+                           boosted_size=len(audio_bytes),
+                           volume_boost_db=boost_volume_db)
+                
+                return audio_bytes
+                
+            except Exception as boost_error:
+                logger.warning("Failed to boost audio volume, returning original", 
+                             error=str(boost_error))
+                # If volume boosting fails, return original audio
+                return original_audio_bytes
+            
+        except Exception as e:
+            logger.error("Failed to generate pronunciation audio", word=word, error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate pronunciation for word '{word}': {str(e)}")
 
     async def close(self):
         """Close the HTTP client."""

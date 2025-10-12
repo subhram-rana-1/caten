@@ -72,7 +72,8 @@ class TextService:
         # Create tasks for concurrent processing
         tasks = []
         for location in word_locations:
-            word = text[location.index:location.index + location.length]
+            # Use the word field directly from the location object
+            word = location.word
             # Get context around the word (±50 characters)
             context_start = max(0, location.index - 50)
             context_end = min(len(text), location.index + location.length + 50)

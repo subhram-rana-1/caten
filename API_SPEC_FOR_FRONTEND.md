@@ -695,4 +695,713 @@ export class PronunciationAPI {
 
 **Use the code examples above** to implement the functionality in your preferred framework (React, Vue, Angular, or vanilla JS).
 
+---
+
+# Voice-to-Text API Specification
+
+## Overview
+
+This API transcribes audio files to text using OpenAI's Whisper model. It accepts various audio formats and returns the transcribed text.
+
+---
+
+## API Endpoint
+
+### Convert Voice to Text
+
+**Endpoint:** `/api/v2/voice-to-text`
+
+**Method:** `POST`
+
+**Content-Type:** `multipart/form-data`
+
+**Description:** Transcribes an audio file to text using OpenAI Whisper model.
+
+---
+
+## Request Format
+
+### Headers
+
+```
+Content-Type: multipart/form-data
+```
+
+### Request Body
+
+The request should contain a single file upload field:
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `audio_file` | file | **Yes** | Audio file to transcribe. Max size: 25MB. |
+
+### Supported Audio Formats
+
+- MP3 (`.mp3`)
+- MP4 (`.mp4`)
+- MPEG (`.mpeg`)
+- MPGA (`.mpga`)
+- M4A (`.m4a`)
+- WAV (`.wav`)
+- WebM (`.webm`)
+
+### File Size Limits
+
+- **Maximum file size:** 25MB
+- Files larger than 25MB will be rejected with a 400 error
+
+---
+
+## Response Format
+
+### Success Response (200 OK)
+
+**Content-Type:** `application/json`
+
+```json
+{
+  "text": "This is the transcribed text from the audio file."
+}
+```
+
+### Response Schema
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `text` | string | The transcribed text from the audio file |
+
+---
+
+## Error Responses
+
+### 400 Bad Request - Invalid Audio Format
+
+```json
+{
+  "detail": "Invalid audio format. Supported formats: mp3, mp4, mpeg, mpga, m4a, wav, webm"
+}
+```
+
+### 400 Bad Request - File Too Large
+
+```json
+{
+  "detail": "Audio file too large (30.50MB). Maximum size is 25MB."
+}
+```
+
+### 422 Validation Error
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "audio_file"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+### 429 Too Many Requests
+
+```json
+{
+  "error_code": "RATE_LIMIT_001",
+  "error_message": "Rate limit exceeded. Maximum 60 requests per minute allowed."
+}
+```
+
+### 500 Internal Server Error
+
+```json
+{
+  "detail": "Failed to transcribe audio: [error details]"
+}
+```
+
+---
+
+## Frontend Implementation Guide
+
+### JavaScript/TypeScript Implementation
+
+```typescript
+/**
+ * Transcribe audio file to text
+ * @param audioFile - The audio file to transcribe (File object)
+ * @returns Promise with transcribed text
+ */
+async function transcribeAudio(audioFile: File): Promise<string> {
+  try {
+    // Create FormData and append the audio file
+    const formData = new FormData();
+    formData.append('audio_file', audioFile);
+    
+    const response = await fetch('http://localhost:8000/api/v2/voice-to-text', {
+      method: 'POST',
+      body: formData
+      // Note: Don't set Content-Type header - browser will set it automatically with boundary
+    });
+    
+    if (!response.ok) {
+      const error = await response.json();
+      throw new Error(error.detail || `HTTP ${response.status}: ${response.statusText}`);
+    }
+    
+    const result = await response.json();
+    return result.text;
+    
+  } catch (error) {
+    console.error('Failed to transcribe audio:', error);
+    throw error;
+  }
+}
+```
+
+### React Component Example
+
+```typescript
+import React, { useState, useRef } from 'react';
+
+interface VoiceToTextProps {
+  onTranscription?: (text: string) => void;
+}
+
+export const VoiceToTextUploader: React.FC<VoiceToTextProps> = ({ onTranscription }) => {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [transcribedText, setTranscribedText] = useState<string>('');
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file size (25MB limit)
+    const maxSize = 25 * 1024 * 1024; // 25MB in bytes
+    if (file.size > maxSize) {
+      setError(`File too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is 25MB.`);
+      return;
+    }
+
+    // Validate file type
+    const validExtensions = ['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'];
+    const extension = file.name.split('.').pop()?.toLowerCase();
+    if (!extension || !validExtensions.includes(extension)) {
+      setError('Invalid audio format. Please upload an audio file.');
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+    setTranscribedText('');
+
+    try {
+      const formData = new FormData();
+      formData.append('audio_file', file);
+
+      const response = await fetch('http://localhost:8000/api/v2/voice-to-text', {
+        method: 'POST',
+        body: formData
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.detail || 'Failed to transcribe audio');
+      }
+
+      const result = await response.json();
+      setTranscribedText(result.text);
+      
+      if (onTranscription) {
+        onTranscription(result.text);
+      }
+
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="voice-to-text-uploader">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm,audio/*"
+        onChange={handleFileChange}
+        disabled={loading}
+        style={{ display: 'none' }}
+      />
+      
+      <button 
+        onClick={() => fileInputRef.current?.click()}
+        disabled={loading}
+        className="upload-button"
+      >
+        {loading ? 'Transcribing...' : 'Upload Audio File'}
+      </button>
+
+      {loading && (
+        <div className="loading-indicator">
+          <p>Transcribing audio, please wait...</p>
+        </div>
+      )}
+
+      {error && (
+        <div className="error-message">
+          <p>Error: {error}</p>
+        </div>
+      )}
+
+      {transcribedText && (
+        <div className="transcription-result">
+          <h3>Transcription:</h3>
+          <p>{transcribedText}</p>
+        </div>
+      )}
+    </div>
+  );
+};
+```
+
+### Vanilla JavaScript Example
+
+```html
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Voice to Text Converter</title>
+  <style>
+    .container {
+      max-width: 600px;
+      margin: 50px auto;
+      padding: 20px;
+      font-family: Arial, sans-serif;
+    }
+    .file-input-wrapper {
+      margin: 20px 0;
+    }
+    .upload-btn {
+      padding: 10px 20px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      cursor: pointer;
+      border-radius: 4px;
+    }
+    .upload-btn:disabled {
+      background-color: #cccccc;
+      cursor: not-allowed;
+    }
+    .result-box {
+      margin-top: 20px;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+    }
+    .error {
+      color: red;
+      margin-top: 10px;
+    }
+    .loading {
+      color: #666;
+      font-style: italic;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Voice to Text Converter</h1>
+    
+    <div class="file-input-wrapper">
+      <input type="file" id="audioFile" accept="audio/*,.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm">
+      <button id="uploadBtn" class="upload-btn">Transcribe Audio</button>
+    </div>
+    
+    <div id="status"></div>
+    <div id="result" class="result-box" style="display:none;"></div>
+  </div>
+
+  <script>
+    const audioFileInput = document.getElementById('audioFile');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const statusDiv = document.getElementById('status');
+    const resultDiv = document.getElementById('result');
+
+    uploadBtn.addEventListener('click', async () => {
+      const file = audioFileInput.files[0];
+      
+      if (!file) {
+        statusDiv.innerHTML = '<p class="error">Please select an audio file first.</p>';
+        return;
+      }
+
+      // Validate file size
+      const maxSize = 25 * 1024 * 1024; // 25MB
+      if (file.size > maxSize) {
+        statusDiv.innerHTML = `<p class="error">File too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is 25MB.</p>`;
+        return;
+      }
+
+      // Show loading state
+      uploadBtn.disabled = true;
+      statusDiv.innerHTML = '<p class="loading">Transcribing audio...</p>';
+      resultDiv.style.display = 'none';
+
+      try {
+        const formData = new FormData();
+        formData.append('audio_file', file);
+
+        const response = await fetch('http://localhost:8000/api/v2/voice-to-text', {
+          method: 'POST',
+          body: formData
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || 'Failed to transcribe audio');
+        }
+
+        const result = await response.json();
+        
+        // Display result
+        statusDiv.innerHTML = '<p style="color: green;">✓ Transcription completed!</p>';
+        resultDiv.style.display = 'block';
+        resultDiv.innerHTML = `<h3>Transcription:</h3><p>${result.text}</p>`;
+
+      } catch (error) {
+        statusDiv.innerHTML = `<p class="error">Error: ${error.message}</p>`;
+        resultDiv.style.display = 'none';
+      } finally {
+        uploadBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>
+```
+
+### Vue.js 3 Composition API Example
+
+```vue
+<template>
+  <div class="voice-to-text">
+    <h2>Voice to Text Converter</h2>
+    
+    <input
+      ref="fileInput"
+      type="file"
+      accept="audio/*,.mp3,.mp4,.mpeg,.mpga,.m4a,.wav,.webm"
+      @change="handleFileUpload"
+      :disabled="loading"
+    />
+    
+    <div v-if="loading" class="loading">
+      <p>Transcribing audio...</p>
+    </div>
+    
+    <div v-if="error" class="error">
+      <p>{{ error }}</p>
+    </div>
+    
+    <div v-if="transcribedText" class="result">
+      <h3>Transcription:</h3>
+      <p>{{ transcribedText }}</p>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref } from 'vue';
+
+const fileInput = ref<HTMLInputElement>();
+const loading = ref(false);
+const error = ref<string>('');
+const transcribedText = ref<string>('');
+
+const handleFileUpload = async (event: Event) => {
+  const target = event.target as HTMLInputElement;
+  const file = target.files?.[0];
+  
+  if (!file) return;
+  
+  // Validate file size
+  const maxSize = 25 * 1024 * 1024; // 25MB
+  if (file.size > maxSize) {
+    error.value = `File too large (${(file.size / 1024 / 1024).toFixed(2)}MB). Maximum size is 25MB.`;
+    return;
+  }
+  
+  loading.value = true;
+  error.value = '';
+  transcribedText.value = '';
+  
+  try {
+    const formData = new FormData();
+    formData.append('audio_file', file);
+    
+    const response = await fetch('http://localhost:8000/api/v2/voice-to-text', {
+      method: 'POST',
+      body: formData
+    });
+    
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'Failed to transcribe audio');
+    }
+    
+    const result = await response.json();
+    transcribedText.value = result.text;
+    
+  } catch (err) {
+    error.value = err instanceof Error ? err.message : 'An error occurred';
+  } finally {
+    loading.value = false;
+  }
+};
+</script>
+
+<style scoped>
+.voice-to-text {
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 20px;
+}
+
+.error {
+  color: red;
+  margin-top: 10px;
+}
+
+.loading {
+  color: #666;
+  font-style: italic;
+  margin-top: 10px;
+}
+
+.result {
+  margin-top: 20px;
+  padding: 15px;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  background-color: #f9f9f9;
+}
+</style>
+```
+
+---
+
+## TypeScript Types
+
+```typescript
+// Request (FormData)
+interface VoiceToTextRequest {
+  audio_file: File;
+}
+
+// Response
+interface VoiceToTextResponse {
+  text: string;
+}
+
+// Error Response
+interface ErrorResponse {
+  detail: string;
+}
+```
+
+---
+
+## Complete API Client Example
+
+```typescript
+class VoiceAPIClient {
+  private baseUrl: string;
+
+  constructor(baseUrl: string = 'http://localhost:8000') {
+    this.baseUrl = baseUrl;
+  }
+
+  /**
+   * Transcribe audio file to text
+   */
+  async transcribeAudio(audioFile: File): Promise<string> {
+    // Validate file size
+    const maxSize = 25 * 1024 * 1024; // 25MB
+    if (audioFile.size > maxSize) {
+      throw new Error(`File too large (${(audioFile.size / 1024 / 1024).toFixed(2)}MB). Maximum size is 25MB.`);
+    }
+
+    // Validate file type
+    const validExtensions = ['mp3', 'mp4', 'mpeg', 'mpga', 'm4a', 'wav', 'webm'];
+    const extension = audioFile.name.split('.').pop()?.toLowerCase();
+    if (!extension || !validExtensions.includes(extension)) {
+      throw new Error('Invalid audio format. Supported formats: ' + validExtensions.join(', '));
+    }
+
+    const formData = new FormData();
+    formData.append('audio_file', audioFile);
+
+    const response = await fetch(`${this.baseUrl}/api/v2/voice-to-text`, {
+      method: 'POST',
+      body: formData
+    });
+
+    if (!response.ok) {
+      const error: ErrorResponse = await response.json();
+      throw new Error(error.detail);
+    }
+
+    const result: VoiceToTextResponse = await response.json();
+    return result.text;
+  }
+
+  /**
+   * Transcribe audio from URL
+   */
+  async transcribeAudioFromUrl(audioUrl: string): Promise<string> {
+    // Fetch the audio file
+    const audioResponse = await fetch(audioUrl);
+    const audioBlob = await audioResponse.blob();
+    
+    // Create a File object from the blob
+    const filename = audioUrl.split('/').pop() || 'audio.mp3';
+    const audioFile = new File([audioBlob], filename, { type: audioBlob.type });
+    
+    return this.transcribeAudio(audioFile);
+  }
+
+  /**
+   * Transcribe audio from MediaRecorder
+   */
+  async transcribeRecording(audioBlob: Blob, filename: string = 'recording.webm'): Promise<string> {
+    const audioFile = new File([audioBlob], filename, { type: audioBlob.type });
+    return this.transcribeAudio(audioFile);
+  }
+}
+```
+
+---
+
+## Usage Examples
+
+### Example 1: File Upload
+
+```typescript
+const client = new VoiceAPIClient();
+
+// Handle file input change
+document.getElementById('audioInput')?.addEventListener('change', async (e) => {
+  const file = (e.target as HTMLInputElement).files?.[0];
+  if (file) {
+    try {
+      const text = await client.transcribeAudio(file);
+      console.log('Transcribed text:', text);
+    } catch (error) {
+      console.error('Transcription failed:', error);
+    }
+  }
+});
+```
+
+### Example 2: Voice Recording
+
+```typescript
+// Record audio from microphone
+let mediaRecorder: MediaRecorder;
+let audioChunks: Blob[] = [];
+
+async function startRecording() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  mediaRecorder = new MediaRecorder(stream);
+  
+  mediaRecorder.ondataavailable = (event) => {
+    audioChunks.push(event.data);
+  };
+  
+  mediaRecorder.start();
+}
+
+async function stopRecordingAndTranscribe() {
+  return new Promise((resolve, reject) => {
+    mediaRecorder.onstop = async () => {
+      const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+      audioChunks = [];
+      
+      try {
+        const client = new VoiceAPIClient();
+        const text = await client.transcribeRecording(audioBlob);
+        resolve(text);
+      } catch (error) {
+        reject(error);
+      }
+    };
+    
+    mediaRecorder.stop();
+  });
+}
+```
+
+### Example 3: Drag and Drop
+
+```typescript
+const dropZone = document.getElementById('dropZone');
+
+dropZone?.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('drag-over');
+});
+
+dropZone?.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  
+  const file = e.dataTransfer?.files[0];
+  if (file) {
+    try {
+      const client = new VoiceAPIClient();
+      const text = await client.transcribeAudio(file);
+      console.log('Transcribed text:', text);
+    } catch (error) {
+      console.error('Transcription failed:', error);
+    }
+  }
+});
+```
+
+---
+
+## Summary for AI Agent
+
+**Task:** Build a frontend application that allows users to:
+1. Upload an audio file or record audio from microphone
+2. Transcribe the audio to text using the API
+3. Display the transcribed text
+4. Handle errors and loading states
+
+**API Details:**
+- **Endpoint:** `POST http://localhost:8000/api/v2/voice-to-text`
+- **Request:** FormData with `audio_file` field
+- **Response:** `{ "text": "transcribed text" }`
+- **Content-Type:** `multipart/form-data` (request), `application/json` (response)
+- **Max file size:** 25MB
+- **Supported formats:** mp3, mp4, mpeg, mpga, m4a, wav, webm
+
+**Key Features to Implement:**
+1. File upload input with drag-and-drop support
+2. Optional: Voice recording with MediaRecorder API
+3. File validation (size and format)
+4. Loading indicator during transcription
+5. Error handling for validation and API errors
+6. Display transcribed text in a readable format
+7. Optional: Copy to clipboard functionality
+8. Optional: Download transcription as text file
+
+**Use the code examples above** to implement the functionality in your preferred framework (React, Vue, Angular, or vanilla JS).
+
 

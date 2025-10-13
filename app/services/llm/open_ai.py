@@ -698,6 +698,60 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to generate pronunciation for word '{word}': {str(e)}")
 
+    async def transcribe_audio(self, audio_bytes: bytes, filename: str, translate: bool = False) -> str:
+        """Transcribe audio to text using OpenAI Whisper API.
+        
+        Args:
+            audio_bytes: Audio file data as bytes
+            filename: Original filename (for format detection)
+            translate: If True, translates non-English audio to English. If False, transcribes in original language.
+        
+        Returns:
+            Transcribed text (in original language or English if translate=True)
+        """
+        try:
+            logger.info("Transcribing audio using Whisper", 
+                       filename=filename, 
+                       audio_size=len(audio_bytes),
+                       translate=translate)
+            
+            # Create a file-like object from bytes
+            audio_file = io.BytesIO(audio_bytes)
+            audio_file.name = filename  # Set the name for format detection
+            
+            if translate:
+                # Use translations endpoint to translate to English
+                response = await self.client.audio.translations.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="text"
+                )
+            else:
+                # Use transcriptions endpoint to transcribe in original language
+                response = await self.client.audio.transcriptions.create(
+                    model="whisper-1",
+                    file=audio_file,
+                    response_format="text"
+                )
+            
+            # Extract the transcribed text
+            transcribed_text = response.strip() if isinstance(response, str) else response.text.strip()
+            
+            logger.info("Successfully transcribed audio", 
+                       filename=filename,
+                       text_length=len(transcribed_text),
+                       translate=translate)
+            
+            return transcribed_text
+            
+        except Exception as e:
+            logger.error("Failed to transcribe audio", 
+                        filename=filename, 
+                        error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to transcribe audio: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

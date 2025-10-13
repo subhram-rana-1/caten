@@ -3,7 +3,7 @@
 import json
 import os
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse, Response
 import structlog
 
@@ -99,6 +99,12 @@ class PronunciationRequest(BaseModel):
     
     word: str = Field(..., min_length=1, max_length=100, description="Word to generate pronunciation for")
     voice: Optional[str] = Field(default="nova", description="Voice to use (alloy, echo, fable, onyx, nova, shimmer). Default is 'nova' for sweet-toned American female voice")
+
+
+class VoiceToTextResponse(BaseModel):
+    """Response model for voice-to-text API."""
+    
+    text: str = Field(..., description="Transcribed text from the audio")
 
 
 async def get_client_id(request: Request) -> str:
@@ -354,3 +360,73 @@ async def get_pronunciation(
     except Exception as e:
         logger.error("Failed to generate pronunciation", word=body.word, error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to generate pronunciation: {str(e)}")
+
+
+@router.post(
+    "/voice-to-text",
+    response_model=VoiceToTextResponse,
+    summary="Convert voice audio to text (v2)",
+    description="Transcribe audio file to text using OpenAI Whisper. Automatically detects language. Supports various audio formats (mp3, mp4, mpeg, mpga, m4a, wav, webm). Use translate=true to translate non-English audio to English."
+)
+async def voice_to_text(
+    request: Request,
+    audio_file: UploadFile = File(..., description="Audio file to transcribe"),
+    translate: bool = False
+):
+    """Convert voice audio to text using OpenAI Whisper.
+    
+    Args:
+        audio_file: Audio file to transcribe
+        translate: If True, translates non-English audio to English. If False (default), transcribes in original language.
+    """
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "voice-to-text")
+    
+    try:
+        # Validate file type
+        allowed_extensions = ["mp3", "mp4", "mpeg", "mpga", "m4a", "wav", "webm"]
+        file_extension = audio_file.filename.split(".")[-1].lower() if audio_file.filename else ""
+        
+        if file_extension not in allowed_extensions:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid audio format. Supported formats: {', '.join(allowed_extensions)}"
+            )
+        
+        # Validate file size (max 25MB for Whisper API)
+        audio_bytes = await audio_file.read()
+        file_size_mb = len(audio_bytes) / (1024 * 1024)
+        
+        if file_size_mb > 25:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Audio file too large ({file_size_mb:.2f}MB). Maximum size is 25MB."
+            )
+        
+        logger.info("Processing voice-to-text request",
+                   filename=audio_file.filename,
+                   file_size_mb=file_size_mb,
+                   file_extension=file_extension,
+                   translate=translate)
+        
+        # Transcribe audio using OpenAI Whisper
+        transcribed_text = await openai_service.transcribe_audio(
+            audio_bytes, 
+            audio_file.filename,
+            translate=translate
+        )
+        
+        logger.info("Successfully transcribed audio",
+                   filename=audio_file.filename,
+                   text_length=len(transcribed_text),
+                   translate=translate)
+        
+        return VoiceToTextResponse(text=transcribed_text)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to transcribe audio", 
+                   filename=audio_file.filename if audio_file else "unknown",
+                   error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {str(e)}")

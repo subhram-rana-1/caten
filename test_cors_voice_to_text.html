@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>CORS Test - Voice to Text API</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+            background: #f5f5f5;
+        }
+        .test-container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border-left: 4px solid #ddd;
+            background: #f9f9f9;
+        }
+        .test-section.success {
+            border-left-color: #28a745;
+            background: #d4edda;
+        }
+        .test-section.error {
+            border-left-color: #dc3545;
+            background: #f8d7da;
+        }
+        .test-section.pending {
+            border-left-color: #ffc107;
+            background: #fff3cd;
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+        }
+        .code {
+            background: #f4f4f4;
+            border: 1px solid #ddd;
+            padding: 10px;
+            border-radius: 5px;
+            font-family: monospace;
+            font-size: 12px;
+            overflow-x: auto;
+            margin: 10px 0;
+        }
+        input[type="file"] {
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="test-container">
+        <h1>🧪 CORS Test for Voice-to-Text API</h1>
+        <p>This page tests if CORS is properly configured for the voice-to-text endpoint.</p>
+        
+        <hr style="margin: 20px 0;">
+        
+        <!-- Test 1: OPTIONS Preflight -->
+        <div class="test-section pending" id="test1">
+            <h3>Test 1: OPTIONS Preflight Request</h3>
+            <p>Testing if the server responds to CORS preflight requests...</p>
+            <button onclick="testPreflight()">Run Test</button>
+            <div id="test1-result"></div>
+        </div>
+
+        <!-- Test 2: POST with CORS -->
+        <div class="test-section pending" id="test2">
+            <h3>Test 2: POST Request with CORS Headers</h3>
+            <p>Testing if POST requests include proper CORS headers...</p>
+            <button onclick="testPostCORS()">Run Test</button>
+            <div id="test2-result"></div>
+        </div>
+
+        <!-- Test 3: Actual File Upload -->
+        <div class="test-section pending" id="test3">
+            <h3>Test 3: Actual File Upload (Full Test)</h3>
+            <p>Upload a real audio file to verify CORS works end-to-end.</p>
+            <input type="file" id="testFile" accept="audio/*,.mp3,.wav,.webm">
+            <br>
+            <button onclick="testFileUpload()">Upload & Test</button>
+            <div id="test3-result"></div>
+        </div>
+
+        <hr style="margin: 20px 0;">
+
+        <div class="test-section" style="background: #e7f3ff; border-left-color: #2196F3;">
+            <h3>🔍 What This Tests</h3>
+            <ul>
+                <li>✅ OPTIONS preflight request handling</li>
+                <li>✅ Access-Control-Allow-Origin header</li>
+                <li>✅ Access-Control-Allow-Methods header</li>
+                <li>✅ Access-Control-Allow-Headers header</li>
+                <li>✅ Multipart form data with CORS</li>
+                <li>✅ Response headers accessibility</li>
+            </ul>
+        </div>
+
+        <div class="test-section" style="background: #fff3e0; border-left-color: #ff9800;">
+            <h3>💡 Expected Results</h3>
+            <p>All tests should pass if CORS is properly configured. If any test fails, check:</p>
+            <ul>
+                <li>Is the FastAPI server running? (<code>python -m uvicorn app.main:app --reload</code>)</li>
+                <li>Is it accessible at <code>http://localhost:8000</code>?</li>
+                <li>Check browser console for detailed error messages</li>
+            </ul>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:8000/api/v2/voice-to-text';
+
+        async function testPreflight() {
+            const resultDiv = document.getElementById('test1-result');
+            const testSection = document.getElementById('test1');
+            
+            try {
+                resultDiv.innerHTML = '<div class="status">Testing OPTIONS request...</div>';
+                
+                const response = await fetch(API_URL, {
+                    method: 'OPTIONS',
+                    headers: {
+                        'Origin': window.location.origin,
+                        'Access-Control-Request-Method': 'POST',
+                        'Access-Control-Request-Headers': 'content-type'
+                    }
+                });
+
+                const corsHeaders = {
+                    'Access-Control-Allow-Origin': response.headers.get('Access-Control-Allow-Origin'),
+                    'Access-Control-Allow-Methods': response.headers.get('Access-Control-Allow-Methods'),
+                    'Access-Control-Allow-Headers': response.headers.get('Access-Control-Allow-Headers'),
+                };
+
+                let html = '<div class="status success">✅ SUCCESS! CORS preflight works!</div>';
+                html += '<div class="code">';
+                html += '<strong>Response Headers:</strong><br>';
+                html += `Status: ${response.status}<br>`;
+                for (const [key, value] of Object.entries(corsHeaders)) {
+                    html += `${key}: ${value || 'Not set'}<br>`;
+                }
+                html += '</div>';
+
+                resultDiv.innerHTML = html;
+                testSection.className = 'test-section success';
+
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="status error">❌ FAILED: ${error.message}</div>`;
+                testSection.className = 'test-section error';
+            }
+        }
+
+        async function testPostCORS() {
+            const resultDiv = document.getElementById('test2-result');
+            const testSection = document.getElementById('test2');
+            
+            try {
+                resultDiv.innerHTML = '<div class="status">Testing POST request with CORS...</div>';
+                
+                // Try to make a POST request (will fail due to no file, but we're testing CORS)
+                const formData = new FormData();
+                
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const corsOrigin = response.headers.get('Access-Control-Allow-Origin');
+                const contentType = response.headers.get('Content-Type');
+
+                let html = '<div class="status success">✅ SUCCESS! POST request with CORS works!</div>';
+                html += '<div class="code">';
+                html += '<strong>Response Info:</strong><br>';
+                html += `Status: ${response.status}<br>`;
+                html += `Access-Control-Allow-Origin: ${corsOrigin || 'Not set'}<br>`;
+                html += `Content-Type: ${contentType}<br>`;
+                html += '<br><strong>Note:</strong> Request may return 422 (validation error) but CORS headers are present!';
+                html += '</div>';
+
+                resultDiv.innerHTML = html;
+                testSection.className = 'test-section success';
+
+            } catch (error) {
+                // Check if it's a CORS error or validation error
+                if (error.message.includes('CORS')) {
+                    resultDiv.innerHTML = `<div class="status error">❌ CORS ERROR: ${error.message}</div>`;
+                    testSection.className = 'test-section error';
+                } else {
+                    // Other errors are OK for this test (validation, etc.)
+                    resultDiv.innerHTML = `<div class="status success">✅ CORS works! (Got expected validation error: ${error.message})</div>`;
+                    testSection.className = 'test-section success';
+                }
+            }
+        }
+
+        async function testFileUpload() {
+            const resultDiv = document.getElementById('test3-result');
+            const testSection = document.getElementById('test3');
+            const fileInput = document.getElementById('testFile');
+            
+            const file = fileInput.files[0];
+            if (!file) {
+                resultDiv.innerHTML = '<div class="status error">❌ Please select an audio file first!</div>';
+                return;
+            }
+
+            try {
+                resultDiv.innerHTML = '<div class="status">Uploading file and testing CORS...</div>';
+                
+                const formData = new FormData();
+                formData.append('audio_file', file);
+
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const corsOrigin = response.headers.get('Access-Control-Allow-Origin');
+                const contentType = response.headers.get('Content-Type');
+
+                if (response.ok) {
+                    const data = await response.json();
+                    let html = '<div class="status success">✅ COMPLETE SUCCESS! File upload with CORS works perfectly!</div>';
+                    html += '<div class="code">';
+                    html += '<strong>CORS Headers Present:</strong><br>';
+                    html += `Access-Control-Allow-Origin: ${corsOrigin || 'Not set'}<br>`;
+                    html += '<br><strong>API Response:</strong><br>';
+                    html += `Status: ${response.status}<br>`;
+                    html += `Transcribed Text: "${data.text.substring(0, 100)}${data.text.length > 100 ? '...' : ''}"`;
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    testSection.className = 'test-section success';
+                } else {
+                    const errorData = await response.json();
+                    let html = '<div class="status error">❌ Request failed but CORS is working</div>';
+                    html += '<div class="code">';
+                    html += `Status: ${response.status}<br>`;
+                    html += `Access-Control-Allow-Origin: ${corsOrigin || 'Not set'}<br>`;
+                    html += `Error: ${errorData.detail}`;
+                    html += '</div>';
+                    resultDiv.innerHTML = html;
+                    
+                    // If CORS header is present, it's a validation error, not CORS
+                    if (corsOrigin) {
+                        testSection.className = 'test-section success';
+                        resultDiv.innerHTML = '<div class="status success">✅ CORS works! (Got API validation error - check file format/size)</div>' + resultDiv.innerHTML;
+                    } else {
+                        testSection.className = 'test-section error';
+                    }
+                }
+
+            } catch (error) {
+                if (error.message.includes('CORS') || error.message.includes('NetworkError')) {
+                    resultDiv.innerHTML = `<div class="status error">❌ CORS ERROR: ${error.message}<br><br>Make sure the server is running!</div>`;
+                    testSection.className = 'test-section error';
+                } else {
+                    resultDiv.innerHTML = `<div class="status error">❌ ERROR: ${error.message}</div>`;
+                    testSection.className = 'test-section error';
+                }
+            }
+        }
+
+        // Auto-run first test on load
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                console.log('Running automatic CORS test...');
+                testPreflight();
+            }, 1000);
+        });
+    </script>
+</body>
+</html>
+

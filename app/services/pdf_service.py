@@ -92,21 +92,17 @@ class PdfService:
                         # Clean up the text
                         cleaned_text = self._clean_text(page_text)
                         
-                        # Add page header
-                        if len(pdf.pages) > 1:
-                            markdown_content.append(f"## Page {page_num}\n")
-                        
-                        # Add the text content
+                        # Add the text content without artificial page headers
                         markdown_content.append(cleaned_text)
                         
-                        # Add spacing between pages
-                        if page_num < len(pdf.pages):
-                            markdown_content.append("\n---\n")
+                        # Add minimal spacing between pages (only if there are multiple pages)
+                        if page_num < len(pdf.pages) and len(pdf.pages) > 1:
+                            markdown_content.append("\n\n")
                     else:
                         logger.warning(f"No text found on page {page_num}")
+                        # Only add a note for empty pages if there are multiple pages
                         if len(pdf.pages) > 1:
-                            markdown_content.append(f"## Page {page_num}\n")
-                            markdown_content.append("*[No readable text found on this page]*\n")
+                            markdown_content.append("*[No readable text found on this page]*\n\n")
             
             # Join all content
             full_content = "\n".join(markdown_content)

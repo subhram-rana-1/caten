@@ -85,7 +85,7 @@ class AskRequest(BaseModel):
     
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatMessage] = Field(default=[], description="Previous chat history for context")
-    initial_context: Optional[str] = Field(default=None, max_length=10000, description="Initial context or background information that the AI should be aware of")
+    initial_context: Optional[str] = Field(default=None, max_length=100000, description="Initial context or background information that the AI should be aware of")
 
 
 class AskResponse(BaseModel):

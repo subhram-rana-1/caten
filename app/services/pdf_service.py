@@ -1,9 +1,12 @@
 """PDF processing and validation service."""
 
 import io
+import tempfile
+import os
 from typing import Tuple
 import PyPDF2
 import pdfplumber
+from pdf2markdown4llm import PDF2Markdown4LLM
 import structlog
 
 from app.config import settings
@@ -76,79 +79,57 @@ class PdfService:
             raise PdfProcessingError(f"Invalid PDF file: {str(e)}")
     
     def extract_text_from_pdf(self, pdf_data: bytes) -> str:
-        """Extract text from PDF and convert to markdown format."""
+        """Extract text from PDF and convert to markdown format using pdf2markdown4llm."""
         try:
-            markdown_content = []
+            # Create a temporary file to store the PDF data
+            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
+                temp_file.write(pdf_data)
+                temp_file_path = temp_file.name
             
-            # Use pdfplumber for better text extraction
-            with pdfplumber.open(io.BytesIO(pdf_data)) as pdf:
-                for page_num, page in enumerate(pdf.pages, 1):
-                    logger.info(f"Processing page {page_num} of {len(pdf.pages)}")
-                    
-                    # Extract text from the page
-                    page_text = page.extract_text()
-                    
-                    if page_text:
-                        # Clean up the text
-                        cleaned_text = self._clean_text(page_text)
-                        
-                        # Add the text content without artificial page headers
-                        markdown_content.append(cleaned_text)
-                        
-                        # Add minimal spacing between pages (only if there are multiple pages)
-                        if page_num < len(pdf.pages) and len(pdf.pages) > 1:
-                            markdown_content.append("\n\n")
-                    else:
-                        logger.warning(f"No text found on page {page_num}")
-                        # Only add a note for empty pages if there are multiple pages
-                        if len(pdf.pages) > 1:
-                            markdown_content.append("*[No readable text found on this page]*\n\n")
-            
-            # Join all content
-            full_content = "\n".join(markdown_content)
-            
-            if not full_content.strip():
-                raise PdfProcessingError("No readable text found in the PDF")
-            
-            logger.info(
-                "Successfully extracted text from PDF",
-                total_pages=len(pdf.pages),
-                content_length=len(full_content)
-            )
-            
-            return full_content
+            try:
+                # Initialize PDF2Markdown4LLM converter
+                def progress_callback(progress):
+                    """Callback function to handle progress updates."""
+                    logger.info(
+                        f"PDF conversion progress: {progress.phase.value}, "
+                        f"Page {progress.current_page}/{progress.total_pages}, "
+                        f"Progress: {progress.percentage:.1f}%, "
+                        f"Message: {progress.message}"
+                    )
+                
+                # Configure converter with optimal settings for LLM processing
+                converter = PDF2Markdown4LLM(
+                    remove_headers=False,  # Keep headers for better structure
+                    skip_empty_tables=True,  # Skip empty tables to reduce noise
+                    table_header="### Table",  # Use consistent table headers
+                    progress_callback=progress_callback
+                )
+                
+                # Convert PDF to Markdown
+                logger.info("Starting PDF to Markdown conversion using pdf2markdown4llm")
+                markdown_content = converter.convert(temp_file_path)
+                
+                if not markdown_content or not markdown_content.strip():
+                    raise PdfProcessingError("No readable text found in the PDF")
+                
+                logger.info(
+                    "Successfully converted PDF to Markdown",
+                    content_length=len(markdown_content)
+                )
+                
+                return markdown_content
+                
+            finally:
+                # Clean up temporary file
+                try:
+                    os.unlink(temp_file_path)
+                except OSError:
+                    logger.warning(f"Failed to delete temporary file: {temp_file_path}")
             
         except Exception as e:
-            logger.error("PDF text extraction failed", error=str(e))
-            raise PdfProcessingError(f"Failed to extract text from PDF: {str(e)}")
+            logger.error("PDF to Markdown conversion failed", error=str(e))
+            raise PdfProcessingError(f"Failed to convert PDF to Markdown: {str(e)}")
     
-    def _clean_text(self, text: str) -> str:
-        """Clean and format extracted text."""
-        if not text:
-            return ""
-        
-        # Remove excessive whitespace
-        lines = text.split('\n')
-        cleaned_lines = []
-        
-        for line in lines:
-            # Strip whitespace from each line
-            cleaned_line = line.strip()
-            
-            # Skip empty lines
-            if not cleaned_line:
-                continue
-            
-            # Add proper markdown formatting for headers (lines that are all caps or start with numbers)
-            if cleaned_line.isupper() and len(cleaned_line) > 3:
-                cleaned_lines.append(f"### {cleaned_line}")
-            elif cleaned_line and cleaned_line[0].isdigit() and '.' in cleaned_line:
-                cleaned_lines.append(f"**{cleaned_line}**")
-            else:
-                cleaned_lines.append(cleaned_line)
-        
-        # Join lines with proper spacing
-        return "\n\n".join(cleaned_lines)
 
 
 # Global service instance

@@ -79,13 +79,13 @@ async def image_to_text(
     "/pdf-to-text",
     response_model=PdfToTextResponse,
     summary="Extract text from PDF",
-    description="Extract readable text from an uploaded PDF file and return it in markdown format. Maximum file size: 2MB"
+    description="Extract readable text from an uploaded PDF file and return it in optimized markdown format using pdf2markdown4llm. Maximum file size: 2MB"
 )
 async def pdf_to_text(
     request: Request,
     file: UploadFile = File(..., description="PDF file to extract text from (max 2MB)")
 ):
-    """Extract text from an uploaded PDF and return in markdown format."""
+    """Extract text from an uploaded PDF and return in optimized markdown format using pdf2markdown4llm."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "pdf-to-text")
     

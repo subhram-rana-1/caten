@@ -225,6 +225,14 @@ class OpenAIService:
             Context: "{context}"
             Word: "{word}"
             
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST detect the language of the input context and respond in the EXACT SAME LANGUAGE
+            - If the context is in English, provide meaning and examples in English
+            - If the context is in Hindi, provide meaning and examples in Hindi
+            - If the context is in Spanish, provide meaning and examples in Spanish
+            - This applies to ALL languages - always match the input language
+            - Do NOT default to English - always match the language of the input context
+            
             Requirements:
             - Provide a simple, clear meaning of the word as used in this context
             - Create exactly 2 simple example sentences showing how to use the word
@@ -280,6 +288,14 @@ class OpenAIService:
             
             Existing examples:
             {existing_examples_text}
+            
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST detect the language of the existing examples and respond in the EXACT SAME LANGUAGE
+            - If the existing examples are in English, provide new examples in English
+            - If the existing examples are in Hindi, provide new examples in Hindi
+            - If the existing examples are in Spanish, provide new examples in Spanish
+            - This applies to ALL languages - always match the language of the existing examples
+            - Do NOT default to English - always match the language of the input
             
             Requirements:
             - Create exactly 2 NEW example sentences (different from existing ones)
@@ -490,6 +506,14 @@ class OpenAIService:
             Original text:
             "{text}"
 
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST detect the language of the input text and respond in the EXACT SAME LANGUAGE
+            - If the input is in English, respond in English
+            - If the input is in Hindi, respond in Hindi
+            - If the input is in Spanish, respond in Spanish
+            - This applies to ALL languages - always match the input language
+            - Do NOT default to English - always match the language of the input text
+
             CRITICAL REQUIREMENTS:
             - Use ONLY basic, everyday words (like "big" instead of "enormous", "old" instead of "ancient")
             - Write in VERY short, simple sentences (maximum 8-10 words per sentence)
@@ -533,7 +557,16 @@ class OpenAIService:
             messages = []
             
             # Add system message for context
-            system_content = "You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses."
+            system_content = """You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
+
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST detect the language of the user's question and respond in the EXACT SAME LANGUAGE
+- If the user asks in English, respond in English
+- If the user asks in Hindi, respond in Hindi
+- If the user asks in Spanish, respond in Spanish
+- This applies to ALL languages - always match the user's input language
+- The language of your response should dynamically change based on each question's language
+- Do NOT default to English - always match the language of the current question"""
             
             # Add initial context if provided
             if initial_context:
@@ -638,11 +671,151 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to generate topic name: {str(e)}")
 
+    async def detect_text_language_code(self, text: str) -> str:
+        """Detect the language of text and return ISO 639-1 language code (e.g., 'EN', 'ES', 'DE')."""
+        try:
+            # Limit text to first 500 chars for efficiency
+            text_sample = text[:500] if len(text) > 500 else text
+            
+            prompt = f"""Detect the language of the following text and return ONLY the ISO 639-1 language code in uppercase (e.g., "EN" for English, "ES" for Spanish, "DE" for German, "FR" for French, "HI" for Hindi, "JA" for Japanese, "ZH" for Chinese, "AR" for Arabic, "IT" for Italian, "PT" for Portuguese, "RU" for Russian, "KO" for Korean, etc.).
+
+Text: "{text_sample}"
+
+CRITICAL REQUIREMENTS:
+- Return ONLY the ISO 639-1 language code in UPPERCASE (e.g., "EN", "ES", "DE", "FR", "HI", "JA", "ZH", "AR", "IT", "PT", "RU", "KO")
+- Do NOT return any additional text, explanation, or formatting
+- Be accurate in language detection for ALL languages
+- If the text contains multiple languages or is unclear, return the primary language code
+- Return only the language code, nothing else
+- Use standard ISO 639-1 two-letter codes in uppercase
+
+Language code:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=10,
+                temperature=0.1
+            )
+
+            language_code = response.choices[0].message.content.strip().upper()
+            # Clean up the response - remove quotes and ensure uppercase
+            language_code = language_code.replace('"', '').replace("'", '').strip().upper()
+            
+            # Validate it's a 2-letter code
+            if len(language_code) != 2:
+                logger.warning("Invalid language code format, defaulting to EN", code=language_code)
+                return "EN"
+            
+            logger.info("Detected text language code", text_preview=text[:50], language_code=language_code)
+            return language_code
+
+        except Exception as e:
+            logger.warning("Failed to detect text language code, defaulting to EN", error=str(e))
+            return "EN"  # Default to English
+
+    async def _detect_word_language(self, word: str) -> str:
+        """Detect the language of a word using LLM to ensure proper pronunciation."""
+        try:
+            prompt = f"""Detect the language of the following word and return ONLY the language name in English (e.g., "English", "Hindi", "Spanish", "French", "German", "Japanese", "Chinese", "Arabic", "Italian", "Portuguese", "Russian", "Korean", etc.).
+
+Word: "{word}"
+
+CRITICAL REQUIREMENTS:
+- Return ONLY the language name in English (e.g., "English", "Hindi", "Spanish", "German", "French")
+- Do NOT return any additional text, explanation, or formatting
+- Be accurate in language detection for ALL languages
+- If the word contains multiple languages or is unclear, return the primary language
+- Return only the language name, nothing else
+
+Language:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=20,
+                temperature=0.1
+            )
+
+            detected_language = response.choices[0].message.content.strip()
+            # Clean up the response
+            detected_language = detected_language.replace('"', '').replace("'", '').strip()
+            
+            logger.info("Detected word language", word=word, language=detected_language)
+            return detected_language
+
+        except Exception as e:
+            logger.warning("Failed to detect word language, proceeding with default", word=word, error=str(e))
+            return "Unknown"  # Fallback to let TTS auto-detect
+
+    async def _prepare_word_for_pronunciation(self, word: str, language: str) -> str:
+        """Prepare word for pronunciation by ensuring proper formatting for the detected language."""
+        try:
+            # Clean and normalize the word first
+            cleaned_word = word.strip()
+            
+            # If language is English or Unknown, return word as-is (but normalized)
+            if language.lower() in ["english", "unknown"]:
+                return cleaned_word
+            
+            # For non-English languages, verify and ensure proper formatting
+            # Use LLM to check if the word is properly formatted for pronunciation in that language
+            prompt = f"""Verify and prepare the following word for text-to-speech pronunciation in {language} language.
+
+Word: "{cleaned_word}"
+Language: {language}
+
+CRITICAL REQUIREMENTS:
+- If the word is already correctly formatted for {language} pronunciation, return it EXACTLY as-is
+- If the word is missing essential diacritics, accents, or special characters for {language}, add them
+- Preserve ALL special characters, diacritics, and accents that are essential for correct pronunciation in {language}
+- For languages with special characters (Spanish: ñ, á, é, í, ó, ú; German: ü, ö, ä, ß; French: é, è, ê, ç, etc.), ensure they are present and correct
+- Do NOT translate the word - only ensure proper formatting for pronunciation
+- Do NOT change the word if it's already correct
+- Do NOT add explanations or additional text
+- Return ONLY the word (formatted if needed), nothing else
+
+Word for pronunciation:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=50,
+                temperature=0.1
+            )
+
+            formatted_word = response.choices[0].message.content.strip()
+            # Clean up the response - remove quotes if present
+            formatted_word = formatted_word.replace('"', '').replace("'", '').strip()
+            
+            # If the formatted word is empty or seems wrong, fall back to original
+            if not formatted_word or len(formatted_word) == 0:
+                logger.warning("Formatted word is empty, using original", word=word, language=language)
+                return cleaned_word
+            
+            # Validate that the formatted word is reasonable (not too different from original)
+            # If it's completely different, it might be a translation error
+            if abs(len(formatted_word) - len(cleaned_word)) > len(cleaned_word) * 0.5:
+                logger.warning("Formatted word seems too different, using original", 
+                             original=cleaned_word, formatted=formatted_word, language=language)
+                return cleaned_word
+            
+            logger.info("Prepared word for pronunciation", 
+                       original_word=cleaned_word, 
+                       formatted_word=formatted_word, 
+                       language=language)
+            return formatted_word
+
+        except Exception as e:
+            logger.warning("Failed to prepare word for pronunciation, using original", 
+                          word=word, language=language, error=str(e))
+            return word.strip()  # Fallback to original word
+
     async def generate_pronunciation_audio(self, word: str, voice: str = "nova", boost_volume_db: float = 8.0) -> bytes:
         """Generate pronunciation audio for a word using OpenAI TTS with volume boost.
         
         Args:
-            word: The word to generate pronunciation for
+            word: The word to generate pronunciation for (can be in any language)
             voice: The voice to use (alloy, echo, fable, onyx, nova, shimmer)
                   Default is 'nova' for a sweet-toned American female voice
             boost_volume_db: Volume boost in decibels (default: 8.0 dB for better audibility)
@@ -653,16 +826,35 @@ class OpenAIService:
         try:
             logger.info("Generating pronunciation audio", word=word, voice=voice, volume_boost=boost_volume_db)
             
+            # Detect the language of the word to ensure proper pronunciation
+            detected_language = await self._detect_word_language(word)
+            logger.info("Word language detected for pronunciation", word=word, language=detected_language)
+            
+            # Prepare the word for pronunciation based on detected language
+            # This ensures proper formatting for non-English languages
+            pronunciation_word = await self._prepare_word_for_pronunciation(word, detected_language)
+            
+            # Validate that we have a word to pronounce
+            if not pronunciation_word or len(pronunciation_word.strip()) == 0:
+                logger.error("Empty pronunciation word after preparation", original_word=word)
+                raise LLMServiceError("Cannot generate pronunciation for empty word")
+            
             # Use OpenAI's text-to-speech API with HD model for better quality
+            # For non-English languages, the prepared word format helps TTS understand the correct pronunciation
             response = await self.client.audio.speech.create(
                 model="tts-1-hd",  # HD model for better quality
                 voice=voice,
-                input=word,
+                input=pronunciation_word,
                 response_format="mp3"
             )
             
             # Get the audio content
             original_audio_bytes = response.content
+            
+            # Validate that audio was generated
+            if not original_audio_bytes or len(original_audio_bytes) == 0:
+                logger.error("Empty audio response from TTS", word=word, pronunciation_word=pronunciation_word, language=detected_language)
+                raise LLMServiceError("TTS returned empty audio data")
             
             # Boost volume using pydub
             try:

@@ -69,6 +69,10 @@ class TextService:
             if location.index + location.length > len(text):
                 raise ValidationError(f"Invalid word location: extends beyond text length")
         
+        # Detect language from the text (once for all words)
+        language_code = await openai_service.detect_text_language_code(text)
+        logger.info("Detected language code for text", language_code=language_code, text_preview=text[:50])
+        
         # Create tasks for concurrent processing
         tasks = []
         for location in word_locations:
@@ -79,7 +83,7 @@ class TextService:
             context_end = min(len(text), location.index + location.length + 50)
             context = text[context_start:context_end]
             
-            task = self._get_single_word_explanation(word, context, location)
+            task = self._get_single_word_explanation(word, context, location, language_code)
             tasks.append(task)
         
         # Process words concurrently and yield results as they complete
@@ -97,7 +101,8 @@ class TextService:
         self, 
         word: str, 
         context: str, 
-        location: WordWithLocation
+        location: WordWithLocation,
+        language_code: str
     ) -> WordInfo:
         """Get explanation for a single word."""
         explanation_data = await openai_service.get_word_explanation(word, context)
@@ -106,7 +111,8 @@ class TextService:
             location=location,
             word=word,
             meaning=explanation_data['meaning'],
-            examples=explanation_data['examples']
+            examples=explanation_data['examples'],
+            languageCode=language_code
         )
     
     async def get_more_examples(

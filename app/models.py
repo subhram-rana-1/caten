@@ -39,6 +39,9 @@ class WordInfo(BaseModel):
     word: str = Field(..., description="The actual word")
     meaning: str = Field(..., description="Simplified meaning of the word")
     examples: List[str] = Field(..., min_items=2, max_items=2, description="Two example sentences")
+    languageCode: Optional[str] = Field(default=None, alias="language_code", description="ISO 639-1 language code (e.g., 'EN', 'ES', 'DE', 'FR')")
+    
+    model_config = ConfigDict(populate_by_name=True)
 
 
 class WordsExplanationRequest(BaseModel):

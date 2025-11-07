@@ -145,7 +145,8 @@ async def words_explanation_v2(
                             "location": word_info.location.model_dump(),
                             "word": word_info.word,
                             "meaning": word_info.meaning,
-                            "examples": word_info.examples
+                            "examples": word_info.examples,
+                            "languageCode": word_info.languageCode
                         }
                     }
                     

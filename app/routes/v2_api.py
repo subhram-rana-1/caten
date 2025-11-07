@@ -107,6 +107,20 @@ class VoiceToTextResponse(BaseModel):
     text: str = Field(..., description="Transcribed text from the audio")
 
 
+class TranslateRequest(BaseModel):
+    """Request model for translate API."""
+    
+    targetLangugeCode: str = Field(..., min_length=2, max_length=2, description="ISO 639-1 language code (e.g., 'EN', 'ES', 'FR', 'DE', 'HI')")
+    texts: List[str] = Field(..., min_items=1, description="List of texts to translate")
+
+
+class TranslateResponse(BaseModel):
+    """Response model for translate API."""
+    
+    targetLangugeCode: str = Field(..., description="Target language code")
+    translatedTexts: List[str] = Field(..., description="List of translated texts")
+
+
 async def get_client_id(request: Request) -> str:
     """Get client identifier for rate limiting."""
     # Use IP address as client ID (in production, you might use authenticated user ID)
@@ -431,3 +445,60 @@ async def voice_to_text(
                    filename=audio_file.filename if audio_file else "unknown",
                    error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to transcribe audio: {str(e)}")
+
+
+@router.post(
+    "/translate",
+    response_model=TranslateResponse,
+    summary="Translate texts to target language (v2)",
+    description="Translate multiple texts to a target language using OpenAI. Supports various language codes (EN, ES, FR, DE, HI, JA, ZH, etc.)"
+)
+async def translate_v2(
+    request: Request,
+    body: TranslateRequest
+):
+    """Translate texts to the target language."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "translate")
+    
+    try:
+        # Validate target language code format (should be 2 uppercase letters)
+        if not body.targetLangugeCode.isalpha() or len(body.targetLangugeCode) != 2:
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid target language code. Must be a 2-letter ISO 639-1 code (e.g., 'EN', 'ES', 'FR')"
+            )
+        
+        # Validate texts are not empty
+        if not body.texts or any(not text.strip() for text in body.texts):
+            raise HTTPException(
+                status_code=400,
+                detail="Texts cannot be empty"
+            )
+        
+        # Translate texts using OpenAI
+        translated_texts = await openai_service.translate_texts(
+            body.texts,
+            body.targetLangugeCode.upper()
+        )
+        
+        logger.info(
+            "Successfully translated texts",
+            target_language_code=body.targetLangugeCode,
+            texts_count=len(body.texts),
+            translated_count=len(translated_texts)
+        )
+        
+        return TranslateResponse(
+            targetLangugeCode=body.targetLangugeCode.upper(),
+            translatedTexts=translated_texts
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to translate texts", 
+                   target_language_code=body.targetLangugeCode,
+                   texts_count=len(body.texts) if body.texts else 0,
+                   error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to translate texts: {str(e)}")

@@ -944,6 +944,126 @@ Word for pronunciation:"""
                 raise
             raise LLMServiceError(f"Failed to transcribe audio: {str(e)}")
 
+    async def translate_texts(self, texts: List[str], target_language_code: str) -> List[str]:
+        """Translate multiple texts to the target language using OpenAI.
+        
+        Args:
+            texts: List of texts to translate
+            target_language_code: ISO 639-1 language code (e.g., 'EN', 'ES', 'FR', 'DE', 'HI', 'JA', 'ZH')
+        
+        Returns:
+            List of translated texts in the same order as input
+        """
+        try:
+            if not texts:
+                return []
+            
+            # Map language codes to full language names for better translation
+            language_map = {
+                "EN": "English",
+                "ES": "Spanish",
+                "FR": "French",
+                "DE": "German",
+                "HI": "Hindi",
+                "JA": "Japanese",
+                "ZH": "Chinese",
+                "AR": "Arabic",
+                "IT": "Italian",
+                "PT": "Portuguese",
+                "RU": "Russian",
+                "KO": "Korean",
+                "NL": "Dutch",
+                "PL": "Polish",
+                "TR": "Turkish",
+                "VI": "Vietnamese",
+                "TH": "Thai",
+                "ID": "Indonesian",
+                "CS": "Czech",
+                "SV": "Swedish",
+                "DA": "Danish",
+                "NO": "Norwegian",
+                "FI": "Finnish",
+                "EL": "Greek",
+                "HE": "Hebrew",
+                "UK": "Ukrainian",
+                "RO": "Romanian",
+                "HU": "Hungarian",
+            }
+            
+            target_language = language_map.get(target_language_code.upper(), target_language_code.upper())
+            
+            # Create a prompt that translates all texts at once
+            texts_list = "\n".join([f"{i+1}. {text}" for i, text in enumerate(texts)])
+            
+            prompt = f"""Translate the following texts to {target_language}. 
+
+Texts to translate:
+{texts_list}
+
+CRITICAL REQUIREMENTS:
+- Translate each text accurately to {target_language}
+- Preserve the meaning and context of each text
+- Maintain the same order as the input texts
+- Return ONLY a JSON array of translated texts in the same order
+- Each element in the array should be the translated version of the corresponding input text
+- Do NOT include any additional text, explanations, or formatting
+- Return the result as a JSON array: ["translated text 1", "translated text 2", ...]
+
+Translated texts (JSON array only):"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.max_tokens,
+                temperature=0.3
+            )
+
+            result = response.choices[0].message.content.strip()
+            
+            # Parse the JSON response
+            try:
+                # Strip Markdown code block if present
+                if result.startswith("```"):
+                    result = re.sub(r"^```(?:json)?\n|\n```$", "", result.strip())
+                
+                translated_texts = json.loads(result)
+                
+                if not isinstance(translated_texts, list):
+                    raise ValueError("Expected JSON array")
+                
+                # Ensure we have the same number of translations as inputs
+                if len(translated_texts) != len(texts):
+                    logger.warning(
+                        "Translation count mismatch", 
+                        input_count=len(texts),
+                        output_count=len(translated_texts)
+                    )
+                    # If we got fewer translations, pad with empty strings
+                    # If we got more, truncate
+                    if len(translated_texts) < len(texts):
+                        translated_texts.extend([""] * (len(texts) - len(translated_texts)))
+                    else:
+                        translated_texts = translated_texts[:len(texts)]
+                
+                logger.info(
+                    "Successfully translated texts",
+                    input_count=len(texts),
+                    target_language=target_language,
+                    target_language_code=target_language_code
+                )
+                
+                return translated_texts
+                
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse translation response as JSON", error=str(e), response=result)
+                raise LLMServiceError("Failed to parse translation response")
+                
+        except Exception as e:
+            logger.error("Failed to translate texts", error=str(e), target_language_code=target_language_code)
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to translate texts: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

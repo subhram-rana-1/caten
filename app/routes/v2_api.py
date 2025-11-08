@@ -121,6 +121,18 @@ class TranslateResponse(BaseModel):
     translatedTexts: List[str] = Field(..., description="List of translated texts")
 
 
+class SummariseRequest(BaseModel):
+    """Request model for summarise API."""
+    
+    text: str = Field(..., min_length=1, max_length=50000, description="Text to summarize (can contain newline characters)")
+
+
+class SummariseResponse(BaseModel):
+    """Response model for summarise API."""
+    
+    summary: str = Field(..., description="Short, insightful summary of the input text")
+
+
 async def get_client_id(request: Request) -> str:
     """Get client identifier for rate limiting."""
     # Use IP address as client ID (in production, you might use authenticated user ID)
@@ -502,3 +514,45 @@ async def translate_v2(
                    texts_count=len(body.texts) if body.texts else 0,
                    error=str(e))
         raise HTTPException(status_code=500, detail=f"Failed to translate texts: {str(e)}")
+
+
+@router.post(
+    "/summarise",
+    response_model=SummariseResponse,
+    summary="Summarise text (v2)",
+    description="Generate a short, insightful summary of the input text using OpenAI. The input text can contain newline characters."
+)
+async def summarise_v2(
+    request: Request,
+    body: SummariseRequest
+):
+    """Generate a short, insightful summary of the input text."""
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "summerise")
+    
+    try:
+        # Validate text is not empty
+        if not body.text or not body.text.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Text cannot be empty"
+            )
+        
+        # Generate summary using OpenAI
+        summary = await openai_service.summarise_text(body.text)
+        
+        logger.info(
+            "Successfully generated summary",
+            text_length=len(body.text),
+            summary_length=len(summary)
+        )
+        
+        return SummariseResponse(summary=summary)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to generate summary", 
+                   text_length=len(body.text) if body.text else 0,
+                   error=str(e))
+        raise HTTPException(status_code=500, detail=f"Failed to generate summary: {str(e)}")

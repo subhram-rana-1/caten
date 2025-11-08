@@ -1064,6 +1064,54 @@ Translated texts (JSON array only):"""
                 raise
             raise LLMServiceError(f"Failed to translate texts: {str(e)}")
 
+    async def summarise_text(self, text: str) -> str:
+        """Generate a short, insightful summary of the given text using OpenAI.
+        
+        Args:
+            text: The text to summarize (can contain newline characters)
+        
+        Returns:
+            A concise, insightful summary of the input text
+        """
+        try:
+            prompt = f"""Analyze the following text and generate a short, insightful summary that captures the main ideas and key points.
+
+Text:
+{text}
+
+CRITICAL REQUIREMENTS:
+- Generate a concise summary that captures the essence and main ideas of the text
+- Keep it brief but insightful - focus on the most important information
+- Preserve the core meaning and key concepts
+- Make it clear and easy to understand
+- If the text contains multiple paragraphs or sections, synthesize them into a coherent summary
+- Handle newline characters and multi-paragraph text appropriately
+- Return only the summary text, no additional commentary or formatting
+- The summary should be significantly shorter than the original text while retaining key information
+
+Summary:"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=settings.max_tokens,
+                temperature=0.3
+            )
+
+            summary = response.choices[0].message.content.strip()
+            
+            logger.info("Successfully generated summary", 
+                       original_length=len(text),
+                       summary_length=len(summary))
+            
+            return summary
+
+        except Exception as e:
+            logger.error("Failed to generate summary", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            raise LLMServiceError(f"Failed to generate summary: {str(e)}")
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

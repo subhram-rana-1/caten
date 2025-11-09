@@ -11,7 +11,8 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
-        case_sensitive=False
+        case_sensitive=False,
+        extra="ignore"  # Ignore extra fields from environment variables
     )
     
     # OpenAI Configuration
@@ -25,8 +26,8 @@ class Settings(BaseSettings):
     
     # Rate Limiting Configuration
     enable_rate_limiting: bool = Field(default=True, description="Enable rate limiting")
-    rate_limit_requests_per_minute: int = Field(default=60, description="Rate limit per minute")
-    redis_url: str = Field(default="redis://localhost:6379", description="Redis URL for rate limiting")
+    rate_limit_requests_per_window: int = Field(default=10, description="Maximum number of requests allowed per time window")
+    rate_limit_window_size_seconds: int = Field(default=10, description="Time window size in seconds for rate limiting")
     
     # File Upload Configuration
     max_file_size_mb: int = Field(default=2, description="Maximum file size in MB")

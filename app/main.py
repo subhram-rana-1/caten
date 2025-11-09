@@ -48,6 +48,8 @@ REQUEST_DURATION = Histogram('http_request_duration_seconds', 'HTTP request dura
 async def lifespan(app: FastAPI):
     """Application lifespan context manager."""
     logger.info("Starting Caten API server", version="1.0.0")
+    # Start rate limiter cleanup task
+    await rate_limiter.start_cleanup_task()
     yield
     logger.info("Shutting down Caten API server")
     await rate_limiter.close()

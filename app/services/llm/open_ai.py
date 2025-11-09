@@ -1071,7 +1071,10 @@ Translated texts (JSON array only):"""
             text: The text to summarize (can contain newline characters)
         
         Returns:
-            A concise, insightful summary of the input text
+            A concise, insightful summary of the input text in the dominant language.
+            If the text contains multiple languages, the summary will be in the language
+            that appears most frequently (e.g., if 80% is German and 20% is English, 
+            the summary will be in German).
         """
         try:
             prompt = f"""Analyze the following text and generate a short, insightful summary that captures the main ideas and key points.
@@ -1080,14 +1083,23 @@ Text:
 {text}
 
 CRITICAL REQUIREMENTS:
+- FIRST, analyze the ENTIRE text to detect the language distribution (e.g., what percentage is English, French, German, Spanish, etc.)
+- Identify which language has the MAXIMUM percentage or is DOMINANT in the text
+- If the text is mixed (e.g., 20% English and 80% German), identify German as the dominant language
+- If the text is mixed (e.g., 30% French and 70% Spanish), identify Spanish as the dominant language
+- Generate the summary in the DOMINANT language (the language with the maximum percentage)
+- If the text contains multiple languages, always choose the language that appears most frequently
 - Generate a concise summary that captures the essence and main ideas of the text
 - Keep it brief but insightful - focus on the most important information
 - Preserve the core meaning and key concepts
 - Make it clear and easy to understand
 - If the text contains multiple paragraphs or sections, synthesize them into a coherent summary
 - Handle newline characters and multi-paragraph text appropriately
-- Return only the summary text, no additional commentary or formatting
 - The summary should be significantly shorter than the original text while retaining key information
+- DO NOT include any language detection statements, prefixes, or meta-commentary in your response
+- DO NOT write phrases like "The text is predominantly in [LANGUAGE]" or any similar language identification statements
+- Return ONLY the pure summary text in the dominant language, nothing else
+- Start directly with the summary content, no introductory phrases or explanations
 
 Summary:"""
 

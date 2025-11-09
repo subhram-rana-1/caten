@@ -520,12 +520,14 @@ async def translate_v2(
     "/summarise",
     response_model=SummariseResponse,
     summary="Summarise text (v2)",
-    description="Generate a short, insightful summary of the input text using OpenAI. The input text can contain newline characters."
+    description="Generate a short, insightful summary of the input text using OpenAI. The summary will be returned in the dominant language of the input text. If the text contains multiple languages, the summary will be in the language that appears most frequently (e.g., if 80% is German and 20% is English, the summary will be in German). The input text can contain newline characters."
 )
 async def summarise_v2(
     request: Request,
     body: SummariseRequest
 ):
+    print(f'body ----> {body}')
+
     """Generate a short, insightful summary of the input text."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "summerise")

@@ -16,6 +16,7 @@ from app.services.text_service import text_service
 from app.services.llm.open_ai import openai_service
 from app.services.rate_limiter import rate_limiter
 from app.exceptions import FileValidationError, ValidationError
+from app.utils.utils import get_client_ip
 from pydantic import BaseModel, Field
 
 logger = structlog.get_logger()
@@ -136,10 +137,7 @@ class SummariseResponse(BaseModel):
 async def get_client_id(request: Request) -> str:
     """Get client identifier for rate limiting."""
     # Use IP address as client ID (in production, you might use authenticated user ID)
-    forwarded_for = request.headers.get("X-Forwarded-For")
-    if forwarded_for:
-        return forwarded_for.split(",")[0].strip()
-    return request.client.host
+    return get_client_ip(request)
 
 
 @router.post(

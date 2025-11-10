@@ -31,6 +31,7 @@ class WordsExplanationV2Request(BaseModel):
     textStartIndex: int = Field(..., ge=0, description="Starting index of the text in the original document")
     text: str = Field(..., min_length=1, max_length=10000, description="Input text to analyze")
     important_words_location: List[WordWithLocation] = Field(..., min_items=1, max_items=10, description="List of important word locations")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class WordsExplanationV2Response(BaseModel):
@@ -46,6 +47,7 @@ class SimplifyRequest(BaseModel):
     textLength: int = Field(..., gt=0, description="Length of the text")
     text: str = Field(..., min_length=1, max_length=10000, description="Text to simplify")
     previousSimplifiedTexts: List[str] = Field(default=[], description="Previous simplified versions for context")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class SimplifyResponse(BaseModel):
@@ -64,6 +66,7 @@ class ImportantWordsV2Request(BaseModel):
     
     textStartIndex: int = Field(..., ge=0, description="Starting index of the text in the original document")
     text: str = Field(..., min_length=1, max_length=10000, description="Input text to analyze")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class ImportantWordsV2Response(BaseModel):
@@ -87,6 +90,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatMessage] = Field(default=[], description="Previous chat history for context")
     initial_context: Optional[str] = Field(default=None, max_length=100000, description="Initial context or background information that the AI should be aware of")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class AskResponse(BaseModel):
@@ -126,6 +130,7 @@ class SummariseRequest(BaseModel):
     """Request model for summarise API."""
     
     text: str = Field(..., min_length=1, max_length=50000, description="Text to summarize (can contain newline characters)")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class SummariseResponse(BaseModel):
@@ -160,7 +165,8 @@ async def words_explanation_v2(
                 # Process each text object
                 async for word_info in text_service.get_words_explanations_stream(
                     text_obj.text, 
-                    text_obj.important_words_location
+                    text_obj.important_words_location,
+                    text_obj.languageCode
                 ):
                     # Create response with textStartIndex
                     response_data = {
@@ -226,7 +232,8 @@ async def simplify_v2(
                 # Stream simplified text chunks from OpenAI
                 async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
-                    text_obj.previousSimplifiedTexts
+                    text_obj.previousSimplifiedTexts,
+                    text_obj.languageCode
                 ):
                     accumulated_simplified += chunk
                     
@@ -298,7 +305,7 @@ async def important_words_from_text_v2(
     await rate_limiter.check_rate_limit(client_id, "important-words-from-text")
     
     # Extract important words using existing service
-    word_with_locations = await text_service.extract_important_words(body.text)
+    word_with_locations = await text_service.extract_important_words(body.text, body.languageCode)
     
     logger.info("Successfully extracted important words v2", 
                text_length=len(body.text), 
@@ -333,7 +340,8 @@ async def ask_v2(
             async for chunk in openai_service.generate_contextual_answer_stream(
                 body.question, 
                 body.chat_history,
-                body.initial_context
+                body.initial_context,
+                body.languageCode
             ):
                 accumulated_answer += chunk
                 
@@ -592,7 +600,7 @@ async def summarise_v2(
         accumulated_summary = ""
         try:
             # Stream summary chunks from OpenAI
-            async for chunk in openai_service.summarise_text_stream(body.text):
+            async for chunk in openai_service.summarise_text_stream(body.text, body.languageCode):
                 accumulated_summary += chunk
                 
                 # Send each chunk as it arrives

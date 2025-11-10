@@ -19,6 +19,52 @@ from app.exceptions import LLMServiceError
 logger = structlog.get_logger()
 
 
+def get_language_name(language_code: Optional[str]) -> Optional[str]:
+    """Convert language code to full language name for prompts.
+    
+    Args:
+        language_code: ISO 639-1 language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI')
+    
+    Returns:
+        Full language name (e.g., 'English', 'French', 'Spanish') or None if code is invalid/None
+    """
+    if not language_code:
+        return None
+    
+    language_map = {
+        "EN": "English",
+        "ES": "Spanish",
+        "FR": "French",
+        "DE": "German",
+        "HI": "Hindi",
+        "JA": "Japanese",
+        "ZH": "Chinese",
+        "AR": "Arabic",
+        "IT": "Italian",
+        "PT": "Portuguese",
+        "RU": "Russian",
+        "KO": "Korean",
+        "NL": "Dutch",
+        "PL": "Polish",
+        "TR": "Turkish",
+        "VI": "Vietnamese",
+        "TH": "Thai",
+        "ID": "Indonesian",
+        "CS": "Czech",
+        "SV": "Swedish",
+        "DA": "Danish",
+        "NO": "Norwegian",
+        "FI": "Finnish",
+        "EL": "Greek",
+        "HE": "Hebrew",
+        "UK": "Ukrainian",
+        "RO": "Romanian",
+        "HU": "Hungarian",
+    }
+    
+    return language_map.get(language_code.upper())
+
+
 class OpenAIService:
     """Service for interacting with OpenAI models."""
 
@@ -142,11 +188,19 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to process image: {str(e)}")
 
-    async def get_important_words(self, text: str) -> List[str]:
+    async def get_important_words(self, text: str, language_code: Optional[str] = None) -> List[str]:
         """Get top 10 most important/difficult words from text in the order they appear."""
         try:
+            # Build language requirement section (for response format, not content language)
+            language_note = ""
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_note = f"\n\nNote: The text is in {language_name} ({language_code})."
+            
             prompt = f"""
             Analyze the following text and identify the top 10 most important and contextually significant words.
+            {language_note}
 
             Requirements:
             - Remove obvious stopwords (a, the, to, and, or, but, etc.)
@@ -217,21 +271,41 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to analyze text for important words: {str(e)}")
 
-    async def get_word_explanation(self, word: str, context: str) -> Dict[str, Any]:
+    async def get_word_explanation(self, word: str, context: str, language_code: Optional[str] = None) -> Dict[str, Any]:
         """Get explanation and examples for a single word in context."""
         try:
-            prompt = f"""Provide a simplified explanation and exactly 2 example sentences for the word "{word}" in the given context.
-
-            Context: "{context}"
-            Word: "{word}"
-            
+            # Build language requirement section
+            language_requirement = ""
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in {language_name} ({language_code})
+            - The meaning and examples MUST be in {language_name} ONLY
+            - Do NOT use any other language - ONLY {language_name}
+            - This is MANDATORY and NON-NEGOTIABLE"""
+                else:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+            - The meaning and examples MUST be in this language ONLY
+            - Do NOT use any other language"""
+            else:
+                language_requirement = """
             CRITICAL LANGUAGE REQUIREMENT:
             - You MUST detect the language of the input context and respond in the EXACT SAME LANGUAGE
             - If the context is in English, provide meaning and examples in English
             - If the context is in Hindi, provide meaning and examples in Hindi
             - If the context is in Spanish, provide meaning and examples in Spanish
             - This applies to ALL languages - always match the input language
-            - Do NOT default to English - always match the language of the input context
+            - Do NOT default to English - always match the language of the input context"""
+            
+            prompt = f"""Provide a simplified explanation and exactly 2 example sentences for the word "{word}" in the given context.
+
+            Context: "{context}"
+            Word: "{word}"
+            {language_requirement}
             
             Requirements:
             - Provide a simple, clear meaning of the word as used in this context
@@ -478,7 +552,7 @@ class OpenAIService:
                     await asyncio.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
 
-    async def simplify_text(self, text: str, previous_simplified_texts: List[str]) -> str:
+    async def simplify_text(self, text: str, previous_simplified_texts: List[str], language_code: Optional[str] = None) -> str:
         """Simplify text using OpenAI with context from previous simplifications."""
         try:
             # Build context from previous simplifications
@@ -499,20 +573,39 @@ class OpenAIService:
             This is the first simplification attempt. Make it EXTREMELY simple with very short sentences and basic words.
             """
 
-            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
-
-            {context_section}
-
-            Original text:
-            "{text}"
-
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in {language_name} ({language_code})
+            - The simplified text MUST be in {language_name} ONLY
+            - Do NOT use any other language - ONLY {language_name}
+            - This is MANDATORY and NON-NEGOTIABLE"""
+                else:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+            - The simplified text MUST be in this language ONLY
+            - Do NOT use any other language"""
+            else:
+                language_requirement = """
             CRITICAL LANGUAGE REQUIREMENT:
             - You MUST detect the language of the input text and respond in the EXACT SAME LANGUAGE
             - If the input is in English, respond in English
             - If the input is in Hindi, respond in Hindi
             - If the input is in Spanish, respond in Spanish
             - This applies to ALL languages - always match the input language
-            - Do NOT default to English - always match the language of the input text
+            - Do NOT default to English - always match the language of the input text"""
+
+            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
+
+            {context_section}
+
+            Original text:
+            "{text}"
+            {language_requirement}
 
             CRITICAL REQUIREMENTS:
             - Use ONLY basic, everyday words (like "big" instead of "enormous", "old" instead of "ancient")
@@ -550,7 +643,7 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to simplify text: {str(e)}")
 
-    async def simplify_text_stream(self, text: str, previous_simplified_texts: List[str]):
+    async def simplify_text_stream(self, text: str, previous_simplified_texts: List[str], language_code: Optional[str] = None):
         """Simplify text with streaming using OpenAI with context from previous simplifications.
         
         Yields chunks of simplified text as they are generated by OpenAI.
@@ -574,20 +667,39 @@ class OpenAIService:
             This is the first simplification attempt. Make it EXTREMELY simple with very short sentences and basic words.
             """
 
-            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
-
-            {context_section}
-
-            Original text:
-            "{text}"
-
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in {language_name} ({language_code})
+            - The simplified text MUST be in {language_name} ONLY
+            - Do NOT use any other language - ONLY {language_name}
+            - This is MANDATORY and NON-NEGOTIABLE"""
+                else:
+                    language_requirement = f"""
+            CRITICAL LANGUAGE REQUIREMENT:
+            - You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+            - The simplified text MUST be in this language ONLY
+            - Do NOT use any other language"""
+            else:
+                language_requirement = """
             CRITICAL LANGUAGE REQUIREMENT:
             - You MUST detect the language of the input text and respond in the EXACT SAME LANGUAGE
             - If the input is in English, respond in English
             - If the input is in Hindi, respond in Hindi
             - If the input is in Spanish, respond in Spanish
             - This applies to ALL languages - always match the input language
-            - Do NOT default to English - always match the language of the input text
+            - Do NOT default to English - always match the language of the input text"""
+
+            prompt = f"""Simplify the following text to make it EXTREMELY easy to understand. Use the simplest possible language and sentence structure.
+
+            {context_section}
+
+            Original text:
+            "{text}"
+            {language_requirement}
 
             CRITICAL REQUIREMENTS:
             - Use ONLY basic, everyday words (like "big" instead of "enormous", "old" instead of "ancient")
@@ -629,15 +741,30 @@ class OpenAIService:
                 raise
             raise LLMServiceError(f"Failed to stream simplified text: {str(e)}")
 
-    async def generate_contextual_answer(self, question: str, chat_history: List, initial_context: Optional[str] = None) -> str:
+    async def generate_contextual_answer(self, question: str, chat_history: List, initial_context: Optional[str] = None, language_code: Optional[str] = None) -> str:
         """Generate contextual answer using chat history for ongoing conversations."""
         try:
             # Build messages from chat history
             messages = []
             
-            # Add system message for context
-            system_content = """You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
-
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in {language_name} ({language_code})
+- Your answer MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+- Your answer MUST be in this language ONLY
+- Do NOT use any other language"""
+            else:
+                language_requirement = """
 CRITICAL LANGUAGE REQUIREMENT:
 - You MUST detect the language of the user's question and respond in the EXACT SAME LANGUAGE
 - If the user asks in English, respond in English
@@ -646,6 +773,11 @@ CRITICAL LANGUAGE REQUIREMENT:
 - This applies to ALL languages - always match the user's input language
 - The language of your response should dynamically change based on each question's language
 - Do NOT default to English - always match the language of the current question"""
+            
+            # Add system message for context
+            system_content = f"""You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
+
+{language_requirement}"""
             
             # Add initial context if provided
             if initial_context:
@@ -692,7 +824,7 @@ CRITICAL LANGUAGE REQUIREMENT:
                 raise
             raise LLMServiceError(f"Failed to generate contextual answer: {str(e)}")
 
-    async def generate_contextual_answer_stream(self, question: str, chat_history: List, initial_context: Optional[str] = None):
+    async def generate_contextual_answer_stream(self, question: str, chat_history: List, initial_context: Optional[str] = None, language_code: Optional[str] = None):
         """Generate contextual answer with streaming using chat history for ongoing conversations.
         
         Yields chunks of text as they are generated by OpenAI.
@@ -701,9 +833,24 @@ CRITICAL LANGUAGE REQUIREMENT:
             # Build messages from chat history
             messages = []
             
-            # Add system message for context
-            system_content = """You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
-
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in {language_name} ({language_code})
+- Your answer MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+- Your answer MUST be in this language ONLY
+- Do NOT use any other language"""
+            else:
+                language_requirement = """
 CRITICAL LANGUAGE REQUIREMENT:
 - You MUST detect the language of the user's question and respond in the EXACT SAME LANGUAGE
 - If the user asks in English, respond in English
@@ -712,6 +859,11 @@ CRITICAL LANGUAGE REQUIREMENT:
 - This applies to ALL languages - always match the user's input language
 - The language of your response should dynamically change based on each question's language
 - Do NOT default to English - always match the language of the current question"""
+            
+            # Add system message for context
+            system_content = f"""You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
+
+{language_requirement}"""
             
             # Add initial context if provided
             if initial_context:
@@ -1213,22 +1365,45 @@ Translated texts (JSON array only):"""
                 raise
             raise LLMServiceError(f"Failed to translate texts: {str(e)}")
 
-    async def summarise_text(self, text: str) -> str:
+    async def summarise_text(self, text: str, language_code: Optional[str] = None) -> str:
         """Generate a short, insightful summary of the given text using OpenAI.
         
         Args:
             text: The text to summarize (can contain newline characters)
+            language_code: Optional language code. If provided, summary will be strictly in this language.
         
         Returns:
             A concise, insightful summary of the input text
         """
         try:
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in {language_name} ({language_code})
+- The summary MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+- The summary MUST be in this language ONLY
+- Do NOT use any other language
+
+"""
+            else:
+                language_requirement = ""
+            
             prompt = f"""Analyze the following text and generate a short, insightful summary that captures the main ideas and key points.
 
 Text:
 {text}
-
-CRITICAL REQUIREMENTS:
+{language_requirement}CRITICAL REQUIREMENTS:
 - Generate a concise summary that captures the essence and main ideas of the text
 - Keep it brief but insightful - focus on the most important information
 - Preserve the core meaning and key concepts
@@ -1261,22 +1436,45 @@ Summary:"""
                 raise
             raise LLMServiceError(f"Failed to generate summary: {str(e)}")
 
-    async def summarise_text_stream(self, text: str):
+    async def summarise_text_stream(self, text: str, language_code: Optional[str] = None):
         """Generate a short, insightful summary of the given text with streaming.
         
         Args:
             text: The text to summarize (can contain newline characters)
+            language_code: Optional language code. If provided, summary will be strictly in this language.
         
         Yields:
             Chunks of the summary text as they are generated by OpenAI.
         """
         try:
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in {language_name} ({language_code})
+- The summary MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST respond STRICTLY in the language specified by code: {language_code.upper()}
+- The summary MUST be in this language ONLY
+- Do NOT use any other language
+
+"""
+            else:
+                language_requirement = ""
+            
             prompt = f"""Analyze the following text and generate a short, insightful summary that captures the main ideas and key points.
 
 Text:
 {text}
-
-CRITICAL REQUIREMENTS:
+{language_requirement}CRITICAL REQUIREMENTS:
 - Generate a concise summary that captures the essence and main ideas of the text
 - Keep it brief but insightful - focus on the most important information
 - Preserve the core meaning and key concepts

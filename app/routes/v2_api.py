@@ -299,42 +299,80 @@ async def important_words_from_text_v2(
 
 @router.post(
     "/ask",
-    response_model=AskResponse,
-    summary="Contextual Q&A (v2)",
-    description="Ask questions with full chat history context and optional initial context for ongoing conversations. Provide initial context to give the AI background information about a topic."
+    summary="Contextual Q&A with streaming (v2)",
+    description="Ask questions with full chat history context and optional initial context for ongoing conversations. Returns streaming word-by-word response via Server-Sent Events. Provide initial context to give the AI background information about a topic."
 )
 async def ask_v2(
     request: Request,
     body: AskRequest
 ):
-    """Handle contextual Q&A with chat history."""
+    """Handle contextual Q&A with chat history using streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "ask")
     
-    try:
-        # Generate answer using OpenAI with chat history and initial context
-        answer = await openai_service.generate_contextual_answer(
-            body.question, 
-            body.chat_history,
-            body.initial_context
-        )
-        
-        # Update chat history
-        updated_history = body.chat_history.copy()
-        updated_history.append(ChatMessage(role="user", content=body.question))
-        updated_history.append(ChatMessage(role="assistant", content=answer))
-        
-        logger.info("Successfully generated contextual answer", 
-                   question_length=len(body.question),
-                   chat_history_length=len(updated_history))
-        
-        return AskResponse(
-            chat_history=updated_history
-        )
-        
-    except Exception as e:
-        logger.error("Failed to generate contextual answer", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+    async def generate_streaming_answer():
+        """Generate SSE stream of answer chunks."""
+        accumulated_answer = ""
+        try:
+            # Stream answer chunks from OpenAI
+            async for chunk in openai_service.generate_contextual_answer_stream(
+                body.question, 
+                body.chat_history,
+                body.initial_context
+            ):
+                accumulated_answer += chunk
+                
+                # Send each chunk as it arrives
+                chunk_data = {
+                    "chunk": chunk,
+                    "accumulated": accumulated_answer
+                }
+                event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                yield event_data
+            
+            # After streaming is complete, send final response with updated chat history
+            updated_history = body.chat_history.copy()
+            updated_history.append(ChatMessage(role="user", content=body.question))
+            updated_history.append(ChatMessage(role="assistant", content=accumulated_answer))
+            
+            final_data = {
+                "type": "complete",
+                "chat_history": [msg.model_dump() for msg in updated_history]
+            }
+            event_data = f"data: {json.dumps(final_data)}\n\n"
+            yield event_data
+            
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+            
+            logger.info("Successfully streamed contextual answer", 
+                       question_length=len(body.question),
+                       answer_length=len(accumulated_answer),
+                       chat_history_length=len(updated_history))
+            
+        except Exception as e:
+            logger.error("Error in ask v2 stream", error=str(e))
+            error_event = {
+                "type": "error",
+                "error_code": "STREAM_003",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    logger.info("Starting ask v2 stream", 
+               question_length=len(body.question),
+               chat_history_length=len(body.chat_history),
+               has_initial_context=bool(body.initial_context))
+    
+    return StreamingResponse(
+        generate_streaming_answer(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 @router.post(

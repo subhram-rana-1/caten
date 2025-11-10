@@ -228,7 +228,7 @@ async def simplify_v2(
         try:
             for text_obj in body:
                 accumulated_simplified = ""
-                
+
                 # Stream simplified text chunks from OpenAI
                 async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
@@ -236,7 +236,7 @@ async def simplify_v2(
                     text_obj.languageCode
                 ):
                     accumulated_simplified += chunk
-                    
+
                     # Send each chunk as it arrives
                     chunk_data = {
                         "textStartIndex": text_obj.textStartIndex,
@@ -338,13 +338,13 @@ async def ask_v2(
         try:
             # Stream answer chunks from OpenAI
             async for chunk in openai_service.generate_contextual_answer_stream(
-                body.question, 
+                body.question,
                 body.chat_history,
                 body.initial_context,
                 body.languageCode
             ):
                 accumulated_answer += chunk
-                
+
                 # Send each chunk as it arrives
                 chunk_data = {
                     "chunk": chunk,
@@ -352,27 +352,27 @@ async def ask_v2(
                 }
                 event_data = f"data: {json.dumps(chunk_data)}\n\n"
                 yield event_data
-            
+
             # After streaming is complete, send final response with updated chat history
             updated_history = body.chat_history.copy()
             updated_history.append(ChatMessage(role="user", content=body.question))
             updated_history.append(ChatMessage(role="assistant", content=accumulated_answer))
-            
+
             final_data = {
                 "type": "complete",
                 "chat_history": [msg.model_dump() for msg in updated_history]
             }
             event_data = f"data: {json.dumps(final_data)}\n\n"
             yield event_data
-            
+
             # Send final completion event
             yield "data: [DONE]\n\n"
-            
-            logger.info("Successfully streamed contextual answer", 
+
+            logger.info("Successfully streamed contextual answer",
                        question_length=len(body.question),
                        answer_length=len(accumulated_answer),
                        chat_history_length=len(updated_history))
-            
+
         except Exception as e:
             logger.error("Error in ask v2 stream", error=str(e))
             error_event = {
@@ -381,12 +381,12 @@ async def ask_v2(
                 "error_message": str(e)
             }
             yield f"data: {json.dumps(error_event)}\n\n"
-    
-    logger.info("Starting ask v2 stream", 
+
+    logger.info("Starting ask v2 stream",
                question_length=len(body.question),
                chat_history_length=len(body.chat_history),
                has_initial_context=bool(body.initial_context))
-    
+
     return StreamingResponse(
         generate_streaming_answer(),
         media_type="text/event-stream",
@@ -594,7 +594,7 @@ async def summarise_v2(
             status_code=400,
             detail="Text cannot be empty"
         )
-    
+
     async def generate_streaming_summary():
         """Generate SSE stream of summary chunks."""
         accumulated_summary = ""
@@ -602,7 +602,7 @@ async def summarise_v2(
             # Stream summary chunks from OpenAI
             async for chunk in openai_service.summarise_text_stream(body.text, body.languageCode):
                 accumulated_summary += chunk
-                
+
                 # Send each chunk as it arrives
                 chunk_data = {
                     "chunk": chunk,
@@ -610,7 +610,7 @@ async def summarise_v2(
                 }
                 event_data = f"data: {json.dumps(chunk_data)}\n\n"
                 yield event_data
-            
+
             # After streaming is complete, send final response with complete summary
             final_data = {
                 "type": "complete",
@@ -618,16 +618,16 @@ async def summarise_v2(
             }
             event_data = f"data: {json.dumps(final_data)}\n\n"
             yield event_data
-            
+
             # Send final completion event
             yield "data: [DONE]\n\n"
-            
+
             logger.info(
                 "Successfully streamed summary",
                 text_length=len(body.text),
                 summary_length=len(accumulated_summary)
             )
-            
+
         except Exception as e:
             logger.error("Error in summarise v2 stream", error=str(e))
             error_event = {
@@ -636,10 +636,10 @@ async def summarise_v2(
                 "error_message": str(e)
             }
             yield f"data: {json.dumps(error_event)}\n\n"
-    
-    logger.info("Starting summarise v2 stream", 
+
+    logger.info("Starting summarise v2 stream",
                text_length=len(body.text))
-    
+
     return StreamingResponse(
         generate_streaming_summary(),
         media_type="text/event-stream",

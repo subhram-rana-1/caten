@@ -206,41 +206,55 @@ async def words_explanation_v2(
 
 @router.post(
     "/simplify",
-    summary="Simplify text with context (v2) - SSE",
-    description="Generate simplified versions of texts using OpenAI API with previous context via Server-Sent Events"
+    summary="Simplify text with context (v2) - SSE Streaming",
+    description="Generate simplified versions of texts using OpenAI API with previous context via Server-Sent Events. Returns streaming word-by-word response as text is simplified."
 )
 async def simplify_v2(
     request: Request,
     body: List[SimplifyRequest]
 ):
-    """Simplify multiple texts with context from previous simplifications using SSE."""
+    """Simplify multiple texts with context from previous simplifications using word-by-word streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "simplify")
     
     async def generate_simplifications():
-        """Generate SSE stream of simplified texts."""
+        """Generate SSE stream of simplified texts with word-by-word streaming."""
         try:
             for text_obj in body:
-                # Generate simplified text using OpenAI
-                simplified_text = await openai_service.simplify_text(
+                accumulated_simplified = ""
+                
+                # Stream simplified text chunks from OpenAI
+                async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
                     text_obj.previousSimplifiedTexts
-                )
+                ):
+                    accumulated_simplified += chunk
+                    
+                    # Send each chunk as it arrives
+                    chunk_data = {
+                        "textStartIndex": text_obj.textStartIndex,
+                        "textLength": text_obj.textLength,
+                        "text": text_obj.text,
+                        "previousSimplifiedTexts": text_obj.previousSimplifiedTexts,
+                        "chunk": chunk,
+                        "accumulatedSimplifiedText": accumulated_simplified
+                    }
+                    event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                    yield event_data
                 
-                # Calculate if more simplification attempts are allowed
+                # After streaming is complete, send final response with complete data
                 should_allow_simplify_more = len(text_obj.previousSimplifiedTexts) < settings.max_simplification_attempts
                 
-                result = SimplifyResponse(
-                    textStartIndex=text_obj.textStartIndex,
-                    textLength=text_obj.textLength,
-                    text=text_obj.text,
-                    previousSimplifiedTexts=text_obj.previousSimplifiedTexts,
-                    simplifiedText=simplified_text,
-                    shouldAllowSimplifyMore=should_allow_simplify_more
-                )
-                
-                # Send SSE event for this individual simplification
-                event_data = f"data: {json.dumps(result.model_dump())}\n\n"
+                final_data = {
+                    "type": "complete",
+                    "textStartIndex": text_obj.textStartIndex,
+                    "textLength": text_obj.textLength,
+                    "text": text_obj.text,
+                    "previousSimplifiedTexts": text_obj.previousSimplifiedTexts,
+                    "simplifiedText": accumulated_simplified,
+                    "shouldAllowSimplifyMore": should_allow_simplify_more
+                }
+                event_data = f"data: {json.dumps(final_data)}\n\n"
                 yield event_data
             
             # Send final completion event
@@ -249,6 +263,7 @@ async def simplify_v2(
         except Exception as e:
             logger.error("Error in simplify v2 stream", error=str(e))
             error_event = {
+                "type": "error",
                 "error_code": "STREAM_002",
                 "error_message": str(e)
             }

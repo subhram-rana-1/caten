@@ -1,7 +1,7 @@
 """Text processing service for word analysis."""
 
 import asyncio
-from typing import List, Dict, Any, AsyncGenerator
+from typing import List, Dict, Any, AsyncGenerator, Optional
 import structlog
 
 from app.models import WordWithLocation, WordInfo
@@ -49,7 +49,8 @@ class TextService:
     async def get_words_explanations_stream(
         self, 
         text: str, 
-        word_locations: List[WordWithLocation]
+        word_locations: List[WordWithLocation],
+        language_code: Optional[str] = None
     ) -> AsyncGenerator[WordInfo, None]:
         """Stream word explanations as they become available."""
         if not text or not text.strip():
@@ -69,9 +70,12 @@ class TextService:
             if location.index + location.length > len(text):
                 raise ValidationError(f"Invalid word location: extends beyond text length")
         
-        # Detect language from the text (once for all words)
-        language_code = await openai_service.detect_text_language_code(text)
-        logger.info("Detected language code for text", language_code=language_code, text_preview=text[:50])
+        # Use provided language_code or detect from text
+        if not language_code:
+            language_code = await openai_service.detect_text_language_code(text)
+            logger.info("Detected language code for text", language_code=language_code, text_preview=text[:50])
+        else:
+            logger.info("Using provided language code", language_code=language_code, text_preview=text[:50])
         
         # Create tasks for concurrent processing
         tasks = []
@@ -105,7 +109,7 @@ class TextService:
         language_code: str
     ) -> WordInfo:
         """Get explanation for a single word."""
-        explanation_data = await openai_service.get_word_explanation(word, context)
+        explanation_data = await openai_service.get_word_explanation(word, context, language_code)
         
         return WordInfo(
             location=location,

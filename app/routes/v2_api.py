@@ -31,6 +31,7 @@ class WordsExplanationV2Request(BaseModel):
     textStartIndex: int = Field(..., ge=0, description="Starting index of the text in the original document")
     text: str = Field(..., min_length=1, max_length=10000, description="Input text to analyze")
     important_words_location: List[WordWithLocation] = Field(..., min_items=1, max_items=10, description="List of important word locations")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class WordsExplanationV2Response(BaseModel):
@@ -46,6 +47,7 @@ class SimplifyRequest(BaseModel):
     textLength: int = Field(..., gt=0, description="Length of the text")
     text: str = Field(..., min_length=1, max_length=10000, description="Text to simplify")
     previousSimplifiedTexts: List[str] = Field(default=[], description="Previous simplified versions for context")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class SimplifyResponse(BaseModel):
@@ -64,6 +66,7 @@ class ImportantWordsV2Request(BaseModel):
     
     textStartIndex: int = Field(..., ge=0, description="Starting index of the text in the original document")
     text: str = Field(..., min_length=1, max_length=10000, description="Input text to analyze")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class ImportantWordsV2Response(BaseModel):
@@ -87,6 +90,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatMessage] = Field(default=[], description="Previous chat history for context")
     initial_context: Optional[str] = Field(default=None, max_length=100000, description="Initial context or background information that the AI should be aware of")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class AskResponse(BaseModel):
@@ -126,6 +130,7 @@ class SummariseRequest(BaseModel):
     """Request model for summarise API."""
     
     text: str = Field(..., min_length=1, max_length=50000, description="Text to summarize (can contain newline characters)")
+    languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
 class SummariseResponse(BaseModel):
@@ -160,7 +165,8 @@ async def words_explanation_v2(
                 # Process each text object
                 async for word_info in text_service.get_words_explanations_stream(
                     text_obj.text, 
-                    text_obj.important_words_location
+                    text_obj.important_words_location,
+                    text_obj.languageCode
                 ):
                     # Create response with textStartIndex
                     response_data = {
@@ -206,41 +212,56 @@ async def words_explanation_v2(
 
 @router.post(
     "/simplify",
-    summary="Simplify text with context (v2) - SSE",
-    description="Generate simplified versions of texts using OpenAI API with previous context via Server-Sent Events"
+    summary="Simplify text with context (v2) - SSE Streaming",
+    description="Generate simplified versions of texts using OpenAI API with previous context via Server-Sent Events. Returns streaming word-by-word response as text is simplified."
 )
 async def simplify_v2(
     request: Request,
     body: List[SimplifyRequest]
 ):
-    """Simplify multiple texts with context from previous simplifications using SSE."""
+    """Simplify multiple texts with context from previous simplifications using word-by-word streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "simplify")
     
     async def generate_simplifications():
-        """Generate SSE stream of simplified texts."""
+        """Generate SSE stream of simplified texts with word-by-word streaming."""
         try:
             for text_obj in body:
-                # Generate simplified text using OpenAI
-                simplified_text = await openai_service.simplify_text(
+                accumulated_simplified = ""
+
+                # Stream simplified text chunks from OpenAI
+                async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
-                    text_obj.previousSimplifiedTexts
-                )
+                    text_obj.previousSimplifiedTexts,
+                    text_obj.languageCode
+                ):
+                    accumulated_simplified += chunk
+
+                    # Send each chunk as it arrives
+                    chunk_data = {
+                        "textStartIndex": text_obj.textStartIndex,
+                        "textLength": text_obj.textLength,
+                        "text": text_obj.text,
+                        "previousSimplifiedTexts": text_obj.previousSimplifiedTexts,
+                        "chunk": chunk,
+                        "accumulatedSimplifiedText": accumulated_simplified
+                    }
+                    event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                    yield event_data
                 
-                # Calculate if more simplification attempts are allowed
+                # After streaming is complete, send final response with complete data
                 should_allow_simplify_more = len(text_obj.previousSimplifiedTexts) < settings.max_simplification_attempts
                 
-                result = SimplifyResponse(
-                    textStartIndex=text_obj.textStartIndex,
-                    textLength=text_obj.textLength,
-                    text=text_obj.text,
-                    previousSimplifiedTexts=text_obj.previousSimplifiedTexts,
-                    simplifiedText=simplified_text,
-                    shouldAllowSimplifyMore=should_allow_simplify_more
-                )
-                
-                # Send SSE event for this individual simplification
-                event_data = f"data: {json.dumps(result.model_dump())}\n\n"
+                final_data = {
+                    "type": "complete",
+                    "textStartIndex": text_obj.textStartIndex,
+                    "textLength": text_obj.textLength,
+                    "text": text_obj.text,
+                    "previousSimplifiedTexts": text_obj.previousSimplifiedTexts,
+                    "simplifiedText": accumulated_simplified,
+                    "shouldAllowSimplifyMore": should_allow_simplify_more
+                }
+                event_data = f"data: {json.dumps(final_data)}\n\n"
                 yield event_data
             
             # Send final completion event
@@ -249,6 +270,7 @@ async def simplify_v2(
         except Exception as e:
             logger.error("Error in simplify v2 stream", error=str(e))
             error_event = {
+                "type": "error",
                 "error_code": "STREAM_002",
                 "error_message": str(e)
             }
@@ -283,7 +305,7 @@ async def important_words_from_text_v2(
     await rate_limiter.check_rate_limit(client_id, "important-words-from-text")
     
     # Extract important words using existing service
-    word_with_locations = await text_service.extract_important_words(body.text)
+    word_with_locations = await text_service.extract_important_words(body.text, body.languageCode)
     
     logger.info("Successfully extracted important words v2", 
                text_length=len(body.text), 
@@ -299,42 +321,81 @@ async def important_words_from_text_v2(
 
 @router.post(
     "/ask",
-    response_model=AskResponse,
-    summary="Contextual Q&A (v2)",
-    description="Ask questions with full chat history context and optional initial context for ongoing conversations. Provide initial context to give the AI background information about a topic."
+    summary="Contextual Q&A with streaming (v2)",
+    description="Ask questions with full chat history context and optional initial context for ongoing conversations. Returns streaming word-by-word response via Server-Sent Events. Provide initial context to give the AI background information about a topic."
 )
 async def ask_v2(
     request: Request,
     body: AskRequest
 ):
-    """Handle contextual Q&A with chat history."""
+    """Handle contextual Q&A with chat history using streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "ask")
     
-    try:
-        # Generate answer using OpenAI with chat history and initial context
-        answer = await openai_service.generate_contextual_answer(
-            body.question, 
-            body.chat_history,
-            body.initial_context
-        )
-        
-        # Update chat history
-        updated_history = body.chat_history.copy()
-        updated_history.append(ChatMessage(role="user", content=body.question))
-        updated_history.append(ChatMessage(role="assistant", content=answer))
-        
-        logger.info("Successfully generated contextual answer", 
-                   question_length=len(body.question),
-                   chat_history_length=len(updated_history))
-        
-        return AskResponse(
-            chat_history=updated_history
-        )
-        
-    except Exception as e:
-        logger.error("Failed to generate contextual answer", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to generate answer: {str(e)}")
+    async def generate_streaming_answer():
+        """Generate SSE stream of answer chunks."""
+        accumulated_answer = ""
+        try:
+            # Stream answer chunks from OpenAI
+            async for chunk in openai_service.generate_contextual_answer_stream(
+                body.question,
+                body.chat_history,
+                body.initial_context,
+                body.languageCode
+            ):
+                accumulated_answer += chunk
+
+                # Send each chunk as it arrives
+                chunk_data = {
+                    "chunk": chunk,
+                    "accumulated": accumulated_answer
+                }
+                event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                yield event_data
+
+            # After streaming is complete, send final response with updated chat history
+            updated_history = body.chat_history.copy()
+            updated_history.append(ChatMessage(role="user", content=body.question))
+            updated_history.append(ChatMessage(role="assistant", content=accumulated_answer))
+
+            final_data = {
+                "type": "complete",
+                "chat_history": [msg.model_dump() for msg in updated_history]
+            }
+            event_data = f"data: {json.dumps(final_data)}\n\n"
+            yield event_data
+
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+
+            logger.info("Successfully streamed contextual answer",
+                       question_length=len(body.question),
+                       answer_length=len(accumulated_answer),
+                       chat_history_length=len(updated_history))
+
+        except Exception as e:
+            logger.error("Error in ask v2 stream", error=str(e))
+            error_event = {
+                "type": "error",
+                "error_code": "STREAM_003",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    logger.info("Starting ask v2 stream",
+               question_length=len(body.question),
+               chat_history_length=len(body.chat_history),
+               has_initial_context=bool(body.initial_context))
+
+    return StreamingResponse(
+        generate_streaming_answer(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
 
 
 @router.post(
@@ -516,43 +577,75 @@ async def translate_v2(
 
 @router.post(
     "/summarise",
-    response_model=SummariseResponse,
-    summary="Summarise text (v2)",
-    description="Generate a short, insightful summary of the input text using OpenAI. The summary will be returned in the dominant language of the input text. If the text contains multiple languages, the summary will be in the language that appears most frequently (e.g., if 80% is German and 20% is English, the summary will be in German). The input text can contain newline characters."
+    summary="Summarise text with streaming (v2)",
+    description="Generate a short, insightful summary of the input text using OpenAI with word-by-word streaming via Server-Sent Events. The input text can contain newline characters."
 )
 async def summarise_v2(
     request: Request,
     body: SummariseRequest
 ):
-    print(f'body ----> {body}')
-
-    """Generate a short, insightful summary of the input text."""
+    """Generate a short, insightful summary of the input text using streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "summerise")
     
-    try:
-        # Validate text is not empty
-        if not body.text or not body.text.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Text cannot be empty"
-            )
-        
-        # Generate summary using OpenAI
-        summary = await openai_service.summarise_text(body.text)
-        
-        logger.info(
-            "Successfully generated summary",
-            text_length=len(body.text),
-            summary_length=len(summary)
+    # Validate text is not empty
+    if not body.text or not body.text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Text cannot be empty"
         )
-        
-        return SummariseResponse(summary=summary)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to generate summary", 
-                   text_length=len(body.text) if body.text else 0,
-                   error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to generate summary: {str(e)}")
+
+    async def generate_streaming_summary():
+        """Generate SSE stream of summary chunks."""
+        accumulated_summary = ""
+        try:
+            # Stream summary chunks from OpenAI
+            async for chunk in openai_service.summarise_text_stream(body.text, body.languageCode):
+                accumulated_summary += chunk
+
+                # Send each chunk as it arrives
+                chunk_data = {
+                    "chunk": chunk,
+                    "accumulated": accumulated_summary
+                }
+                event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                yield event_data
+
+            # After streaming is complete, send final response with complete summary
+            final_data = {
+                "type": "complete",
+                "summary": accumulated_summary
+            }
+            event_data = f"data: {json.dumps(final_data)}\n\n"
+            yield event_data
+
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+
+            logger.info(
+                "Successfully streamed summary",
+                text_length=len(body.text),
+                summary_length=len(accumulated_summary)
+            )
+
+        except Exception as e:
+            logger.error("Error in summarise v2 stream", error=str(e))
+            error_event = {
+                "type": "error",
+                "error_code": "STREAM_004",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+
+    logger.info("Starting summarise v2 stream",
+               text_length=len(body.text))
+
+    return StreamingResponse(
+        generate_streaming_summary(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )

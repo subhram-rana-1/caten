@@ -569,41 +569,75 @@ async def translate_v2(
 
 @router.post(
     "/summarise",
-    response_model=SummariseResponse,
-    summary="Summarise text (v2)",
-    description="Generate a short, insightful summary of the input text using OpenAI. The input text can contain newline characters."
+    summary="Summarise text with streaming (v2)",
+    description="Generate a short, insightful summary of the input text using OpenAI with word-by-word streaming via Server-Sent Events. The input text can contain newline characters."
 )
 async def summarise_v2(
     request: Request,
     body: SummariseRequest
 ):
-    """Generate a short, insightful summary of the input text."""
+    """Generate a short, insightful summary of the input text using streaming."""
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "summerise")
     
-    try:
-        # Validate text is not empty
-        if not body.text or not body.text.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="Text cannot be empty"
-            )
-        
-        # Generate summary using OpenAI
-        summary = await openai_service.summarise_text(body.text)
-        
-        logger.info(
-            "Successfully generated summary",
-            text_length=len(body.text),
-            summary_length=len(summary)
+    # Validate text is not empty
+    if not body.text or not body.text.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Text cannot be empty"
         )
-        
-        return SummariseResponse(summary=summary)
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error("Failed to generate summary", 
-                   text_length=len(body.text) if body.text else 0,
-                   error=str(e))
-        raise HTTPException(status_code=500, detail=f"Failed to generate summary: {str(e)}")
+    
+    async def generate_streaming_summary():
+        """Generate SSE stream of summary chunks."""
+        accumulated_summary = ""
+        try:
+            # Stream summary chunks from OpenAI
+            async for chunk in openai_service.summarise_text_stream(body.text):
+                accumulated_summary += chunk
+                
+                # Send each chunk as it arrives
+                chunk_data = {
+                    "chunk": chunk,
+                    "accumulated": accumulated_summary
+                }
+                event_data = f"data: {json.dumps(chunk_data)}\n\n"
+                yield event_data
+            
+            # After streaming is complete, send final response with complete summary
+            final_data = {
+                "type": "complete",
+                "summary": accumulated_summary
+            }
+            event_data = f"data: {json.dumps(final_data)}\n\n"
+            yield event_data
+            
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+            
+            logger.info(
+                "Successfully streamed summary",
+                text_length=len(body.text),
+                summary_length=len(accumulated_summary)
+            )
+            
+        except Exception as e:
+            logger.error("Error in summarise v2 stream", error=str(e))
+            error_event = {
+                "type": "error",
+                "error_code": "STREAM_004",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    logger.info("Starting summarise v2 stream", 
+               text_length=len(body.text))
+    
+    return StreamingResponse(
+        generate_streaming_summary(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )

@@ -638,7 +638,9 @@ async def summarise_v2(
             yield f"data: {json.dumps(error_event)}\n\n"
 
     logger.info("Starting summarise v2 stream",
-               text_length=len(body.text))
+               text_length=len(body.text),
+               language_code=body.languageCode,
+               has_language_code=body.languageCode is not None)
 
     return StreamingResponse(
         generate_streaming_summary(),

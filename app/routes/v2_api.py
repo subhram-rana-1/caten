@@ -97,6 +97,7 @@ class AskResponse(BaseModel):
     """Response model for ask API."""
     
     chat_history: List[ChatMessage] = Field(..., description="Updated chat history including the new Q&A")
+    possibleQuestions: List[str] = Field(..., description="List of top 3 recommended questions based on current question and chat history, ordered by relevance/importance")
 
 
 class PronunciationRequest(BaseModel):
@@ -137,6 +138,7 @@ class SummariseResponse(BaseModel):
     """Response model for summarise API."""
     
     summary: str = Field(..., description="Short, insightful summary of the input text")
+    possibleQuestions: List[str] = Field(..., description="List of top 5 possible questions based on the context, ordered by relevance/importance")
 
 
 async def get_client_id(request: Request) -> str:
@@ -353,14 +355,32 @@ async def ask_v2(
                 event_data = f"data: {json.dumps(chunk_data)}\n\n"
                 yield event_data
 
-            # After streaming is complete, send final response with updated chat history
+            # After streaming is complete, generate recommended questions
+            # Build updated chat history first
             updated_history = body.chat_history.copy()
             updated_history.append(ChatMessage(role="user", content=body.question))
             updated_history.append(ChatMessage(role="assistant", content=accumulated_answer))
+            
+            possible_questions = []
+            try:
+                # Pass updated history (including current Q&A) for better context in question generation
+                # The method will use this to generate follow-up questions based on the full conversation
+                possible_questions = await openai_service.generate_recommended_questions(
+                    body.question,
+                    updated_history,  # Use updated history including current Q&A for better context
+                    body.initial_context,
+                    body.languageCode
+                )
+            except Exception as e:
+                logger.error("Failed to generate recommended questions, continuing without them", error=str(e))
+                # Continue with empty questions list if generation fails
+                possible_questions = []
 
+            # Send final response with updated chat history and possible questions
             final_data = {
                 "type": "complete",
-                "chat_history": [msg.model_dump() for msg in updated_history]
+                "chat_history": [msg.model_dump() for msg in updated_history],
+                "possibleQuestions": possible_questions
             }
             event_data = f"data: {json.dumps(final_data)}\n\n"
             yield event_data
@@ -371,7 +391,8 @@ async def ask_v2(
             logger.info("Successfully streamed contextual answer",
                        question_length=len(body.question),
                        answer_length=len(accumulated_answer),
-                       chat_history_length=len(updated_history))
+                       chat_history_length=len(updated_history),
+                       questions_count=len(possible_questions))
 
         except Exception as e:
             logger.error("Error in ask v2 stream", error=str(e))
@@ -611,10 +632,23 @@ async def summarise_v2(
                 event_data = f"data: {json.dumps(chunk_data)}\n\n"
                 yield event_data
 
-            # After streaming is complete, send final response with complete summary
+            # After streaming is complete, generate possible questions
+            possible_questions = []
+            try:
+                possible_questions = await openai_service.generate_possible_questions(
+                    body.text,
+                    body.languageCode
+                )
+            except Exception as e:
+                logger.error("Failed to generate possible questions, continuing without them", error=str(e))
+                # Continue with empty questions list if generation fails
+                possible_questions = []
+
+            # Send final response with complete summary and possible questions
             final_data = {
                 "type": "complete",
-                "summary": accumulated_summary
+                "summary": accumulated_summary,
+                "possibleQuestions": possible_questions
             }
             event_data = f"data: {json.dumps(final_data)}\n\n"
             yield event_data
@@ -625,7 +659,8 @@ async def summarise_v2(
             logger.info(
                 "Successfully streamed summary",
                 text_length=len(body.text),
-                summary_length=len(accumulated_summary)
+                summary_length=len(accumulated_summary),
+                questions_count=len(possible_questions)
             )
 
         except Exception as e:

@@ -1585,6 +1585,268 @@ Summary:"""
                 raise
             raise LLMServiceError(f"Failed to stream summary: {str(e)}")
 
+    async def generate_possible_questions(self, text: str, language_code: Optional[str] = None) -> List[str]:
+        """Generate top 5 possible questions based on the given context/text.
+        
+        Args:
+            text: The text/story to generate questions from
+            language_code: Optional language code. If provided, questions will be strictly in this language.
+        
+        Returns:
+            List of top 5 questions ordered by relevance/importance in decreasing order
+        """
+        try:
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {language_name} ({language_code})
+- All questions MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in the language specified by code: {language_code.upper()}
+- All questions MUST be in this language ONLY
+- Do NOT use any other language
+
+"""
+            else:
+                # Detect language from text
+                detected_language_code = await self.detect_text_language_code(text)
+                detected_language_name = get_language_name(detected_language_code)
+                language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {detected_language_name or detected_language_code} ({detected_language_code})
+- All questions MUST be in {detected_language_name or detected_language_code} ONLY
+- Do NOT use any other language - ONLY {detected_language_name or detected_language_code}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+
+            prompt = f"""{language_requirement}Analyze the following text/story and generate the top 5 most relevant and important questions that someone might ask about this content.
+
+Text/Story:
+{text}
+
+CRITICAL REQUIREMENTS:
+- Generate exactly 5 questions
+- Questions should be based on the most important, relevant, and interesting aspects of the text/story
+- Order questions by their relevance and importance in decreasing order (most relevant first)
+- Questions should be thought-provoking and help readers understand key concepts, themes, or details
+- Focus on questions that explore the main ideas, important details, implications, or deeper understanding
+- Make questions clear, concise, and well-formed
+- Questions should be in the same language as specified above
+- Return the result as a JSON array of exactly 5 strings, ordered by relevance (most relevant first)
+- Each question should be a complete, grammatically correct sentence ending with a question mark
+
+Return only the JSON array, no additional text or formatting.
+
+Example format:
+["What is the main theme of this story?", "Why did the character make that decision?", "What are the key implications of this concept?", "How does this relate to the broader context?", "What details are most important to understand?"]
+
+Questions (JSON array only):"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=500,  # Enough for 5 questions
+                temperature=0.5
+            )
+
+            result = response.choices[0].message.content.strip()
+
+            # Parse the JSON response
+            try:
+                # Strip Markdown code block if present
+                if result.startswith("```"):
+                    result = re.sub(r"^```(?:json)?\n|\n```$", "", result.strip())
+
+                questions = json.loads(result)
+
+                if not isinstance(questions, list):
+                    raise ValueError("Expected JSON array")
+
+                # Convert all to strings and strip whitespace
+                questions = [str(q).strip() for q in questions]
+
+                # Ensure we have exactly 5 questions, pad or truncate if needed
+                if len(questions) < 5:
+                    logger.warning("Received fewer than 5 questions, padding with empty strings", count=len(questions))
+                    questions.extend([""] * (5 - len(questions)))
+                elif len(questions) > 5:
+                    logger.warning("Received more than 5 questions, truncating", count=len(questions))
+                    questions = questions[:5]
+
+                logger.info("Successfully generated possible questions",
+                           text_length=len(text),
+                           questions_count=len(questions),
+                           language_code=language_code)
+
+                return questions
+
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse questions response as JSON", error=str(e), response=result)
+                # Return empty list as fallback
+                return [""] * 5
+
+        except Exception as e:
+            logger.error("Failed to generate possible questions", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            # Return empty list as fallback instead of raising error
+            logger.warning("Returning empty questions list due to error", error=str(e))
+            return [""] * 5
+
+    async def generate_recommended_questions(self, current_question: str, chat_history: List, initial_context: Optional[str] = None, language_code: Optional[str] = None) -> List[str]:
+        """Generate top 3 recommended questions based on current question and chat history.
+        
+        Args:
+            current_question: The current question being asked
+            chat_history: Previous chat history for context
+            initial_context: Optional initial context or background information
+            language_code: Optional language code. If provided, questions will be strictly in this language.
+        
+        Returns:
+            List of top 3 recommended questions ordered by relevance/importance in decreasing order
+        """
+        try:
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {language_name} ({language_code})
+- All questions MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in the language specified by code: {language_code.upper()}
+- All questions MUST be in this language ONLY
+- Do NOT use any other language
+
+"""
+            else:
+                # Detect language from current question and chat history
+                text_to_detect = current_question
+                if chat_history:
+                    recent_messages = chat_history[-3:] if len(chat_history) > 3 else chat_history
+                    for msg in recent_messages:
+                        if hasattr(msg, 'content'):
+                            text_to_detect += " " + msg.content
+                        elif isinstance(msg, dict):
+                            text_to_detect += " " + msg.get('content', '')
+                
+                detected_language_code = await self.detect_text_language_code(text_to_detect)
+                detected_language_name = get_language_name(detected_language_code)
+                language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {detected_language_name or detected_language_code} ({detected_language_code})
+- All questions MUST be in {detected_language_name or detected_language_code} ONLY
+- Do NOT use any other language - ONLY {detected_language_name or detected_language_code}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+
+            # Build chat history context
+            chat_history_text = ""
+            if chat_history:
+                chat_history_text = "\n\nPrevious conversation:\n"
+                for msg in chat_history:
+                    role = msg.role if hasattr(msg, 'role') else msg.get('role', 'user')
+                    content = msg.content if hasattr(msg, 'content') else msg.get('content', '')
+                    chat_history_text += f"{role.capitalize()}: {content}\n"
+            
+            # Build initial context section
+            initial_context_section = ""
+            if initial_context:
+                initial_context_section = f"\n\nInitial Context: {initial_context}\n"
+
+            prompt = f"""{language_requirement}Analyze the current question and conversation history to generate the top 3 most relevant and recommended follow-up questions that would help the user explore the topic further.
+
+Current Question: {current_question}
+{initial_context_section}{chat_history_text}
+CRITICAL REQUIREMENTS:
+- Generate exactly 3 recommended questions
+- Questions should be based on the current question, the conversation context, and the topics being discussed
+- Questions should help the user explore related aspects, dive deeper into the topic, or clarify important points
+- Order questions by their relevance and importance in decreasing order (most relevant first)
+- Questions should be natural follow-ups that would logically come next in the conversation
+- Make questions clear, concise, and well-formed
+- Questions should be in the same language as specified above
+- Return the result as a JSON array of exactly 3 strings, ordered by relevance (most relevant first)
+- Each question should be a complete, grammatically correct sentence ending with a question mark
+- Focus on questions that would be most helpful for understanding the topic better
+
+Return only the JSON array, no additional text or formatting.
+
+Example format:
+["What are the key implications of this concept?", "How does this relate to the broader context?", "What are some practical applications?"]
+
+Recommended Questions (JSON array only):"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,  # Enough for 3 questions
+                temperature=0.5
+            )
+
+            result = response.choices[0].message.content.strip()
+
+            # Parse the JSON response
+            try:
+                # Strip Markdown code block if present
+                if result.startswith("```"):
+                    result = re.sub(r"^```(?:json)?\n|\n```$", "", result.strip())
+
+                questions = json.loads(result)
+
+                if not isinstance(questions, list):
+                    raise ValueError("Expected JSON array")
+
+                # Convert all to strings and strip whitespace
+                questions = [str(q).strip() for q in questions]
+
+                # Ensure we have exactly 3 questions, pad or truncate if needed
+                if len(questions) < 3:
+                    logger.warning("Received fewer than 3 questions, padding with empty strings", count=len(questions))
+                    questions.extend([""] * (3 - len(questions)))
+                elif len(questions) > 3:
+                    logger.warning("Received more than 3 questions, truncating", count=len(questions))
+                    questions = questions[:3]
+
+                logger.info("Successfully generated recommended questions",
+                           current_question_length=len(current_question),
+                           chat_history_length=len(chat_history),
+                           questions_count=len(questions),
+                           language_code=language_code)
+
+                return questions
+
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse recommended questions response as JSON", error=str(e), response=result)
+                # Return empty list as fallback
+                return [""] * 3
+
+        except Exception as e:
+            logger.error("Failed to generate recommended questions", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            # Return empty list as fallback instead of raising error
+            logger.warning("Returning empty questions list due to error", error=str(e))
+            return [""] * 3
+
     async def close(self):
         """Close the HTTP client."""
         if hasattr(self.client, '_client') and hasattr(self.client._client, 'aclose'):

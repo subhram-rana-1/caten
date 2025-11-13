@@ -59,6 +59,7 @@ class SimplifyResponse(BaseModel):
     previousSimplifiedTexts: List[str] = Field(..., description="Previous simplified versions")
     simplifiedText: str = Field(..., description="New simplified text")
     shouldAllowSimplifyMore: bool = Field(..., description="Whether more simplification attempts are allowed")
+    possibleQuestions: Optional[List[str]] = Field(default=None, description="List of 1 to 3 possible questions based on the text (only included when previousSimplifiedTexts is empty), ordered by relevance/importance in decreasing order")
 
 
 class ImportantWordsV2Request(BaseModel):
@@ -251,8 +252,22 @@ async def simplify_v2(
                     event_data = f"data: {json.dumps(chunk_data)}\n\n"
                     yield event_data
                 
-                # After streaming is complete, send final response with complete data
+                # After streaming is complete, generate possible questions if previousSimplifiedTexts is empty
                 should_allow_simplify_more = len(text_obj.previousSimplifiedTexts) < settings.max_simplification_attempts
+                
+                possible_questions = None
+                # Only generate questions if previousSimplifiedTexts is empty
+                if len(text_obj.previousSimplifiedTexts) == 0:
+                    try:
+                        possible_questions = await openai_service.generate_possible_questions_for_text(
+                            text_obj.text,
+                            text_obj.languageCode,
+                            max_questions=3
+                        )
+                    except Exception as e:
+                        logger.error("Failed to generate possible questions for simplify, continuing without them", error=str(e))
+                        # Continue without questions if generation fails
+                        possible_questions = None
                 
                 final_data = {
                     "type": "complete",
@@ -263,6 +278,11 @@ async def simplify_v2(
                     "simplifiedText": accumulated_simplified,
                     "shouldAllowSimplifyMore": should_allow_simplify_more
                 }
+                
+                # Only include possibleQuestions if it was generated (i.e., previousSimplifiedTexts was empty)
+                if possible_questions is not None:
+                    final_data["possibleQuestions"] = possible_questions
+                
                 event_data = f"data: {json.dumps(final_data)}\n\n"
                 yield event_data
             

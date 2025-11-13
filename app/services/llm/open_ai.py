@@ -794,7 +794,23 @@ CRITICAL LANGUAGE REQUIREMENT:
             # Add system message for context
             system_content = f"""You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
 
-{language_requirement}"""
+{language_requirement}
+
+CRITICAL CONTEXT VALIDATION REQUIREMENTS:
+- You MUST carefully evaluate whether the user's question is related to the provided context (initial context and conversation history)
+- If the user's question is COMPLETELY UNRELATED to the given context:
+  * You MUST STRICTLY and CLEARLY point this out to the user
+  * Use a polite but direct approach (e.g., "⚠️ This question is not related to the context provided" or "This question is outside the scope of the given context")
+  * Explain that you can only answer questions based on the provided context
+  * Do NOT attempt to answer unrelated questions - instead, redirect the user to ask questions relevant to the context
+- If the user's question is SOMEWHAT RELEVANT but unclear or ambiguous:
+  * You MUST ask clarifying questions to better understand what the user wants to know
+  * Ask 1-2 specific, helpful clarifying questions that will help you provide a better answer
+  * Examples: "Could you clarify what aspect of [topic] you're interested in?", "Are you asking about [option A] or [option B]?"
+  * Do NOT guess or provide vague answers - always ask for clarification when needed
+- If the question is CLEARLY RELATED and well-defined:
+  * Provide a comprehensive, accurate answer based on the context
+- Always prioritize accuracy and relevance over attempting to answer every question"""
 
             # Add initial context if provided
             if initial_context:
@@ -900,7 +916,40 @@ CRITICAL LANGUAGE REQUIREMENT:
             # Add system message for context
             system_content = f"""You are a helpful AI assistant that provides clear, accurate, and contextual answers. Use the conversation history to maintain context and provide relevant responses.
 
-{language_requirement}"""
+{language_requirement}
+
+CRITICAL CONTEXT VALIDATION REQUIREMENTS:
+- You MUST carefully evaluate whether the user's question is related to the provided context (initial context and conversation history)
+- If the user's question is COMPLETELY UNRELATED to the given context:
+  * You MUST STRICTLY and CLEARLY point this out to the user
+  * Use a polite but direct approach (e.g., "⚠️ This question is not related to the context provided" or "This question is outside the scope of the given context")
+  * Explain that you can only answer questions based on the provided context
+  * Do NOT attempt to answer unrelated questions - instead, redirect the user to ask questions relevant to the context
+- If the user's question is SOMEWHAT RELEVANT but unclear or ambiguous:
+  * You MUST ask clarifying questions to better understand what the user wants to know
+  * Ask 1-2 specific, helpful clarifying questions that will help you provide a better answer
+  * Examples: "Could you clarify what aspect of [topic] you're interested in?", "Are you asking about [option A] or [option B]?"
+  * Do NOT guess or provide vague answers - always ask for clarification when needed
+- If the question is CLEARLY RELATED and well-defined:
+  * Provide a comprehensive, accurate answer based on the context
+- Always prioritize accuracy and relevance over attempting to answer every question
+
+FORMATTING AND STRUCTURE GUIDELINES:
+- Format your answers using Markdown syntax for better readability
+- Use **bold** formatting for key terms, important concepts, names, or critical information (use sparingly, only for emphasis)
+- Use *italic* formatting for emphasis on specific words or phrases when it adds clarity (use judiciously)
+- When your answer naturally contains multiple points, items, steps, or explanations, use bullet points (•) or numbered lists
+- Use point-by-point format when listing concepts, features, benefits, steps, causes, effects, or any structured information
+- Structure longer answers with clear paragraphs or sections when appropriate
+- Use appropriate icons/emojis SPARINGLY and PURPOSEFULLY to enhance understanding:
+  * Use icons only when they genuinely add value (e.g., 📊 for data/statistics, ⚠️ for warnings, ✅ for key points, 💡 for insights, 🔍 for analysis, 📝 for notes)
+  * Do NOT overuse icons - maximum 2-4 icons per answer, only when they enhance comprehension
+  * Avoid using icons in every sentence or paragraph
+  * Choose icons that are universally understood and relevant to the content
+  * Icons should help users quickly identify important sections or types of information
+- Balance is key: prioritize clarity, accuracy, and readability over decorative elements
+- Make the answer engaging and easy to understand, but maintain professionalism
+- Format complex information in a way that makes it easy to scan and digest"""
 
             # Add initial context if provided
             if initial_context:
@@ -1552,8 +1601,21 @@ CRITICAL REQUIREMENTS:
 - Make it clear and easy to understand
 - If the text contains multiple paragraphs or sections, synthesize them into a coherent summary
 - Handle newline characters and multi-paragraph text appropriately
-- Return only the summary text, no additional commentary or formatting
 - The summary should be significantly shorter than the original text while retaining key information
+
+FORMATTING AND STRUCTURE REQUIREMENTS:
+- Use **bold** formatting for key terms, important concepts, names, or critical points (use sparingly, only for emphasis)
+- Use *italic* formatting for emphasis on specific words or phrases when it adds clarity (use judiciously)
+- When the content naturally has multiple points, items, or steps, use bullet points (•) or numbered lists for better readability
+- Use point-by-point format when listing concepts, features, benefits, or any structured information
+- Structure the summary with clear paragraphs or sections when appropriate
+- Use appropriate icons/emojis SPARINGLY and PURPOSEFULLY to enhance understanding:
+  * Use icons only when they genuinely add value (e.g., 📊 for data/statistics, ⚠️ for warnings, ✅ for key points, 💡 for insights)
+  * Do NOT overuse icons - maximum 2-3 icons per summary, only when they enhance comprehension
+  * Avoid using icons in every sentence or paragraph
+  * Choose icons that are universally understood and relevant to the content
+- Balance is key: prioritize clarity and readability over decorative elements
+- Format the response using Markdown syntax (**, *, bullet points, etc.)
 
 Remember: Your ENTIRE response must be in the language specified above. Do NOT use any other language.
 
@@ -1702,6 +1764,133 @@ Questions (JSON array only):"""
             # Return empty list as fallback instead of raising error
             logger.warning("Returning empty questions list due to error", error=str(e))
             return [""] * 5
+
+    async def generate_possible_questions_for_text(self, text: str, language_code: Optional[str] = None, max_questions: int = 3) -> List[str]:
+        """Generate possible questions based on the given text (at least 1, at most max_questions).
+        
+        Args:
+            text: The text to generate questions from
+            language_code: Optional language code. If provided, questions will be strictly in this language.
+            max_questions: Maximum number of questions to generate (default: 3, generates 1-3 questions)
+        
+        Returns:
+            List of 1 to max_questions questions ordered by relevance/importance in decreasing order
+        """
+        try:
+            # Build language requirement section
+            if language_code:
+                language_name = get_language_name(language_code)
+                if language_name:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {language_name} ({language_code})
+- All questions MUST be in {language_name} ONLY
+- Do NOT use any other language - ONLY {language_name}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+                else:
+                    language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in the language specified by code: {language_code.upper()}
+- All questions MUST be in this language ONLY
+- Do NOT use any other language
+
+"""
+            else:
+                # Detect language from text
+                detected_language_code = await self.detect_text_language_code(text)
+                detected_language_name = get_language_name(detected_language_code)
+                language_requirement = f"""
+CRITICAL LANGUAGE REQUIREMENT:
+- You MUST generate questions STRICTLY in {detected_language_name or detected_language_code} ({detected_language_code})
+- All questions MUST be in {detected_language_name or detected_language_code} ONLY
+- Do NOT use any other language - ONLY {detected_language_name or detected_language_code}
+- This is MANDATORY and NON-NEGOTIABLE
+
+"""
+
+            prompt = f"""{language_requirement}Analyze the following text and generate the most relevant and important questions that someone might ask about this content.
+
+Text:
+{text}
+
+CRITICAL REQUIREMENTS:
+- Generate AT LEAST 1 question and AT MOST {max_questions} questions
+- Only generate questions if they are genuinely relevant and important to understanding the text
+- If the text is very simple or short, you may generate only 1 question
+- If the text is complex or has multiple important aspects, generate up to {max_questions} questions
+- Quality over quantity: only include questions that add real value for understanding the text
+- Questions should be based on the most important, relevant, and interesting aspects of the text
+- Order questions by their relevance and importance in decreasing order (most relevant first)
+- Questions should be thought-provoking and help readers understand key concepts, themes, or details
+- Focus on questions that explore the main ideas, important details, implications, or deeper understanding
+- Make questions clear, concise, and well-formed
+- Questions should be in the same language as specified above
+- Return the result as a JSON array of 1 to {max_questions} strings, ordered by relevance (most relevant first)
+- Each question should be a complete, grammatically correct sentence ending with a question mark
+- Do NOT pad with empty strings or generate filler questions - only include meaningful questions
+
+Return only the JSON array, no additional text or formatting.
+
+Example formats (depending on text complexity):
+- Simple text: ["What is the main theme of this text?"]
+- Medium complexity: ["What is the main theme of this text?", "Why is this concept important?"]
+- Complex text: ["What is the main theme of this text?", "Why is this concept important?", "What are the key implications?"]
+
+Questions (JSON array only):"""
+
+            response = await self._make_api_call(
+                model=settings.gpt4o_model,
+                messages=[{"role": "user", "content": prompt}],
+                max_tokens=300,  # Enough for 3 questions
+                temperature=0.5
+            )
+
+            result = response.choices[0].message.content.strip()
+
+            # Parse the JSON response
+            try:
+                # Strip Markdown code block if present
+                if result.startswith("```"):
+                    result = re.sub(r"^```(?:json)?\n|\n```$", "", result.strip())
+
+                questions = json.loads(result)
+
+                if not isinstance(questions, list):
+                    raise ValueError("Expected JSON array")
+
+                # Convert all to strings, strip whitespace, and filter out empty questions
+                questions = [str(q).strip() for q in questions if q and str(q).strip()]
+
+                # Validate we have at least 1 question
+                if len(questions) == 0:
+                    logger.warning("No valid questions generated, this should not happen", text_preview=text[:50])
+                    # Return a single generic question as fallback
+                    questions = ["What is the main idea of this text?"]
+                elif len(questions) > max_questions:
+                    logger.warning(f"Received more than {max_questions} questions, truncating to top {max_questions}", count=len(questions))
+                    questions = questions[:max_questions]
+
+                logger.info("Successfully generated possible questions for text",
+                           text_length=len(text),
+                           questions_count=len(questions),
+                           language_code=language_code)
+
+                return questions
+
+            except json.JSONDecodeError as e:
+                logger.error("Failed to parse questions response as JSON", error=str(e), response=result)
+                # Return a single generic question as fallback
+                return ["What is the main idea of this text?"]
+
+        except Exception as e:
+            logger.error("Failed to generate possible questions for text", error=str(e))
+            if isinstance(e, LLMServiceError):
+                raise
+            # Return a single generic question as fallback instead of empty list
+            logger.warning("Returning fallback question due to error", error=str(e))
+            return ["What is the main idea of this text?"]
 
     async def generate_recommended_questions(self, current_question: str, chat_history: List, initial_context: Optional[str] = None, language_code: Optional[str] = None) -> List[str]:
         """Generate top 3 recommended questions based on current question and chat history.

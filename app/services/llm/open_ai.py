@@ -1609,13 +1609,15 @@ FORMATTING AND STRUCTURE REQUIREMENTS:
 - When the content naturally has multiple points, items, or steps, use bullet points (•) or numbered lists for better readability
 - Use point-by-point format when listing concepts, features, benefits, or any structured information
 - Structure the summary with clear paragraphs or sections when appropriate
-- Use appropriate icons/emojis SPARINGLY and PURPOSEFULLY to enhance understanding:
-  * Use icons only when they genuinely add value (e.g., 📊 for data/statistics, ⚠️ for warnings, ✅ for key points, 💡 for insights)
-  * Do NOT overuse icons - maximum 2-3 icons per summary, only when they enhance comprehension
-  * Avoid using icons in every sentence or paragraph
-  * Choose icons that are universally understood and relevant to the content
-- Balance is key: prioritize clarity and readability over decorative elements
-- Format the response using Markdown syntax (**, *, bullet points, etc.)
+- Use appropriate emojis/icons PURPOSEFULLY throughout the summary to enhance the reading experience and make it more engaging:
+  * Use emojis wherever they add value and improve comprehension (e.g., 📊 for data/statistics, ⚠️ for warnings, ✅ for key points, 💡 for insights, 🔍 for analysis, 📝 for notes, 🎯 for goals, ⚡ for important highlights, 🌟 for key achievements, 📈 for growth/trends, 🔑 for important concepts, 💼 for business-related content, 🎓 for educational content, 🏆 for achievements, ⏰ for time-related content, 📍 for locations, 👥 for people/teams, 💰 for financial content, 🔬 for scientific content, 🎨 for creative content, etc.)
+  * Use emojis to visually break up text and make different sections more scannable
+  * Place emojis at the beginning of key points, important statements, or section headers to draw attention
+  * Choose emojis that are universally understood and directly relevant to the content
+  * Use emojis naturally and organically - they should enhance understanding, not distract
+  * Feel free to use multiple emojis throughout the summary where they genuinely improve the reading experience
+  * Balance is important: use emojis to make the summary visually appealing and easier to read, but ensure they add value
+- Format the response using Markdown syntax (**, *, bullet points, etc.) combined with emojis for the best reading experience
 
 Remember: Your ENTIRE response must be in the language specified above. Do NOT use any other language.
 

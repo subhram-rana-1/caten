@@ -47,6 +47,7 @@ class SimplifyRequest(BaseModel):
     textLength: int = Field(..., gt=0, description="Length of the text")
     text: str = Field(..., min_length=1, max_length=10000, description="Text to simplify")
     previousSimplifiedTexts: List[str] = Field(default=[], description="Previous simplified versions for context")
+    context: Optional[str] = Field(default=None, max_length=50000, description="Full context surrounding the text (prefix words + text + suffix text). This helps the AI better understand the meaning and simplify appropriately.")
     languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
@@ -236,7 +237,8 @@ async def simplify_v2(
                 async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
                     text_obj.previousSimplifiedTexts,
-                    text_obj.languageCode
+                    text_obj.languageCode,
+                    text_obj.context
                 ):
                     accumulated_simplified += chunk
 

@@ -2,6 +2,7 @@
 
 import json
 import os
+from enum import Enum
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
 from fastapi.responses import StreamingResponse, Response
@@ -15,6 +16,7 @@ from app.models import (
 from app.services.text_service import text_service
 from app.services.llm.open_ai import openai_service
 from app.services.rate_limiter import rate_limiter
+from app.services.web_search_service import web_search_service
 from app.exceptions import FileValidationError, ValidationError
 from app.utils.utils import get_client_ip
 from pydantic import BaseModel, Field
@@ -22,6 +24,13 @@ from pydantic import BaseModel, Field
 logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/v2", tags=["API v2"])
+
+
+# Enums
+class ContextType(str, Enum):
+    """Context type enum for ask and summarise APIs."""
+    PAGE = "PAGE"
+    TEXT = "TEXT"
 
 
 # V2-specific models
@@ -47,6 +56,7 @@ class SimplifyRequest(BaseModel):
     textLength: int = Field(..., gt=0, description="Length of the text")
     text: str = Field(..., min_length=1, max_length=10000, description="Text to simplify")
     previousSimplifiedTexts: List[str] = Field(default=[], description="Previous simplified versions for context")
+    context: Optional[str] = Field(default=None, max_length=50000, description="Full context surrounding the text (prefix words + text + suffix text). This helps the AI better understand the meaning and simplify appropriately.")
     languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
@@ -59,6 +69,7 @@ class SimplifyResponse(BaseModel):
     previousSimplifiedTexts: List[str] = Field(..., description="Previous simplified versions")
     simplifiedText: str = Field(..., description="New simplified text")
     shouldAllowSimplifyMore: bool = Field(..., description="Whether more simplification attempts are allowed")
+    possibleQuestions: Optional[List[str]] = Field(default=None, description="List of 1 to 3 possible questions based on the text (only included when previousSimplifiedTexts is empty), ordered by relevance/importance in decreasing order")
 
 
 class ImportantWordsV2Request(BaseModel):
@@ -90,6 +101,7 @@ class AskRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=2000, description="User's question")
     chat_history: List[ChatMessage] = Field(default=[], description="Previous chat history for context")
     initial_context: Optional[str] = Field(default=None, max_length=100000, description="Initial context or background information that the AI should be aware of")
+    context_type: Optional[ContextType] = Field(default=ContextType.TEXT, description="Type of context: PAGE (for page/document context with source references) or TEXT (standard text context). Default is TEXT.")
     languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
@@ -131,6 +143,7 @@ class SummariseRequest(BaseModel):
     """Request model for summarise API."""
     
     text: str = Field(..., min_length=1, max_length=50000, description="Text to summarize (can contain newline characters)")
+    context_type: Optional[ContextType] = Field(default=ContextType.TEXT, description="Type of context: PAGE (for page/document context with source references) or TEXT (standard text context). Default is TEXT.")
     languageCode: Optional[str] = Field(default=None, max_length=10, description="Optional language code (e.g., 'EN', 'FR', 'ES', 'DE', 'HI'). If provided, response will be strictly in this language. If None, language will be auto-detected.")
 
 
@@ -139,6 +152,35 @@ class SummariseResponse(BaseModel):
     
     summary: str = Field(..., description="Short, insightful summary of the input text")
     possibleQuestions: List[str] = Field(..., description="List of top 5 possible questions based on the context, ordered by relevance/importance")
+
+
+class WebSearchRequest(BaseModel):
+    """Request model for web search API."""
+    
+    query: str = Field(..., min_length=1, max_length=500, description="Search query string")
+    max_results: Optional[int] = Field(default=10, ge=1, le=50, description="Maximum number of results to return (1-50, default: 10)")
+    region: Optional[str] = Field(default="wt-wt", description="Search region code (default: 'wt-wt' for worldwide)")
+    language: Optional[str] = Field(default=None, description="Language code for search results (e.g., 'en', 'es', 'fr', 'de', 'hi'). If None, defaults to English ('en').")
+
+
+class SearchResultItem(BaseModel):
+    """Model for individual search result item."""
+    
+    title: str = Field(..., description="Title of the search result")
+    link: str = Field(..., description="URL of the search result")
+    snippet: str = Field(..., description="Brief description or excerpt from the page")
+    displayLink: str = Field(..., description="Display-friendly URL")
+    image: Optional[Dict[str, Any]] = Field(default=None, description="Optional image information")
+
+
+class WebSearchResponse(BaseModel):
+    """Response model for web search API (Google Search API-like format)."""
+    
+    kind: str = Field(..., description="Type of response")
+    searchInformation: Dict[str, Any] = Field(..., description="Search metadata including search time and total results")
+    queries: Dict[str, Any] = Field(..., description="Query information")
+    items: List[SearchResultItem] = Field(..., description="Array of search result items")
+    error: Optional[Dict[str, str]] = Field(default=None, description="Error information if search failed")
 
 
 async def get_client_id(request: Request) -> str:
@@ -235,7 +277,8 @@ async def simplify_v2(
                 async for chunk in openai_service.simplify_text_stream(
                     text_obj.text, 
                     text_obj.previousSimplifiedTexts,
-                    text_obj.languageCode
+                    text_obj.languageCode,
+                    text_obj.context
                 ):
                     accumulated_simplified += chunk
 
@@ -251,8 +294,22 @@ async def simplify_v2(
                     event_data = f"data: {json.dumps(chunk_data)}\n\n"
                     yield event_data
                 
-                # After streaming is complete, send final response with complete data
+                # After streaming is complete, generate possible questions if previousSimplifiedTexts is empty
                 should_allow_simplify_more = len(text_obj.previousSimplifiedTexts) < settings.max_simplification_attempts
+                
+                possible_questions = None
+                # Only generate questions if previousSimplifiedTexts is empty
+                if len(text_obj.previousSimplifiedTexts) == 0:
+                    try:
+                        possible_questions = await openai_service.generate_possible_questions_for_text(
+                            text_obj.text,
+                            text_obj.languageCode,
+                            max_questions=3
+                        )
+                    except Exception as e:
+                        logger.error("Failed to generate possible questions for simplify, continuing without them", error=str(e))
+                        # Continue without questions if generation fails
+                        possible_questions = None
                 
                 final_data = {
                     "type": "complete",
@@ -263,6 +320,11 @@ async def simplify_v2(
                     "simplifiedText": accumulated_simplified,
                     "shouldAllowSimplifyMore": should_allow_simplify_more
                 }
+                
+                # Only include possibleQuestions if it was generated (i.e., previousSimplifiedTexts was empty)
+                if possible_questions is not None:
+                    final_data["possibleQuestions"] = possible_questions
+                
                 event_data = f"data: {json.dumps(final_data)}\n\n"
                 yield event_data
             
@@ -339,11 +401,13 @@ async def ask_v2(
         accumulated_answer = ""
         try:
             # Stream answer chunks from OpenAI
+            context_type_value = body.context_type.value if body.context_type else "TEXT"
             async for chunk in openai_service.generate_contextual_answer_stream(
                 body.question,
                 body.chat_history,
                 body.initial_context,
-                body.languageCode
+                body.languageCode,
+                context_type_value
             ):
                 accumulated_answer += chunk
 
@@ -621,7 +685,8 @@ async def summarise_v2(
         accumulated_summary = ""
         try:
             # Stream summary chunks from OpenAI
-            async for chunk in openai_service.summarise_text_stream(body.text, body.languageCode):
+            context_type_value = body.context_type.value if body.context_type else "TEXT"
+            async for chunk in openai_service.summarise_text_stream(body.text, body.languageCode, context_type_value):
                 accumulated_summary += chunk
 
                 # Send each chunk as it arrives
@@ -679,6 +744,178 @@ async def summarise_v2(
 
     return StreamingResponse(
         generate_streaming_summary(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"  # Disable nginx buffering
+        }
+    )
+
+
+@router.post(
+    "/web-search",
+    response_model=WebSearchResponse,
+    summary="Perform web search (v2)",
+    description="Search the web using DuckDuckGo and return results in Google Search API-like JSON format. Results include title, link, snippet, displayLink, and optional image for each result. Perfect for displaying search results in a frontend similar to Google Search."
+)
+async def web_search_v2(
+    request: Request,
+    body: WebSearchRequest
+):
+    """Perform a web search and return structured results in Google Search API format.
+    
+    This endpoint performs web searches using DuckDuckGo (free, no API key required)
+    and returns results in a format similar to Google's Custom Search JSON API.
+    The response structure is optimized for frontend display, making it easy to
+    create a Google Search-like interface.
+    
+    Args:
+        body: WebSearchRequest containing query, max_results, and optional region
+    
+    Returns:
+        WebSearchResponse with search metadata and array of result items
+    """
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "web-search")
+    
+    try:
+        # Validate query
+        if not body.query or not body.query.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="Query cannot be empty"
+            )
+        
+        logger.info("Processing web search request",
+                   query=body.query,
+                   max_results=body.max_results,
+                   region=body.region,
+                   language=body.language)
+        
+        # Perform web search
+        search_results = await web_search_service.search(
+            query=body.query,
+            max_results=body.max_results or 10,
+            region=body.region,
+            language=body.language
+        )
+        
+        # Convert items to SearchResultItem models
+        items = []
+        for item_data in search_results.get("items", []):
+            items.append(SearchResultItem(
+                title=item_data.get("title", ""),
+                link=item_data.get("link", ""),
+                snippet=item_data.get("snippet", ""),
+                displayLink=item_data.get("displayLink", ""),
+                image=item_data.get("image")
+            ))
+        
+        # Build response
+        response = WebSearchResponse(
+            kind=search_results.get("kind", "customsearch#search"),
+            searchInformation=search_results.get("searchInformation", {}),
+            queries=search_results.get("queries", {}),
+            items=items,
+            error=search_results.get("error")
+        )
+        
+        logger.info("Successfully completed web search",
+                   query=body.query,
+                   results_count=len(items),
+                   search_time=search_results.get("searchInformation", {}).get("searchTime", 0))
+        
+        return response
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error("Failed to perform web search",
+                   query=body.query if body else "unknown",
+                   error=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to perform web search: {str(e)}"
+        )
+
+
+@router.post(
+    "/web-search-stream",
+    summary="Perform web search with streaming (v2) - SSE",
+    description="Search the web using DuckDuckGo and stream results progressively via Server-Sent Events. Results are sent one by one as they become available, providing a better user experience with progressive loading. Each result includes title, link, snippet, displayLink, and optional image."
+)
+async def web_search_stream_v2(
+    request: Request,
+    body: WebSearchRequest
+):
+    """Perform a web search and stream results progressively via Server-Sent Events.
+    
+    This endpoint performs web searches using DuckDuckGo and streams results
+    one by one as they become available. The first event contains search metadata,
+    followed by individual result items, and finally a completion event.
+    
+    Event types:
+    - "metadata": Contains searchInformation and queries (sent first)
+    - "result": Individual search result item
+    - "complete": Indicates all results have been sent
+    - "error": Error information if search failed
+    
+    Args:
+        body: WebSearchRequest containing query, max_results, and optional region
+    
+    Returns:
+        StreamingResponse with Server-Sent Events
+    """
+    client_id = await get_client_id(request)
+    await rate_limiter.check_rate_limit(client_id, "web-search")
+    
+    async def generate_search_stream():
+        """Generate SSE stream of search results."""
+        try:
+            # Validate query
+            if not body.query or not body.query.strip():
+                error_event = {
+                    "type": "error",
+                    "error": {
+                        "code": "VALIDATION_ERROR",
+                        "message": "Query cannot be empty"
+                    }
+                }
+                yield f"data: {json.dumps(error_event)}\n\n"
+                return
+            
+            logger.info("Starting web search stream",
+                       query=body.query,
+                       max_results=body.max_results,
+                       region=body.region,
+                       language=body.language)
+            
+            # Stream search results
+            async for event_data in web_search_service.search_stream(
+                query=body.query,
+                max_results=body.max_results or 10,
+                region=body.region,
+                language=body.language
+            ):
+                # Send each event as SSE
+                event_json = f"data: {json.dumps(event_data)}\n\n"
+                yield event_json
+            
+            # Send final completion event
+            yield "data: [DONE]\n\n"
+            
+        except Exception as e:
+            logger.error("Error in web search stream", error=str(e))
+            error_event = {
+                "type": "error",
+                "error_code": "STREAM_005",
+                "error_message": str(e)
+            }
+            yield f"data: {json.dumps(error_event)}\n\n"
+    
+    return StreamingResponse(
+        generate_search_stream(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

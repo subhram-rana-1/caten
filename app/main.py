@@ -15,8 +15,9 @@ from app.exceptions import (
     general_exception_handler,
     http_exception_handler
 )
-from app.routes import v1_api, v2_api, health
+from app.routes import v1_api, v2_api, health, auth
 from app.services.rate_limiter import rate_limiter
+from app.database import init_db, close_db
 
 # Configure structured logging
 structlog.configure(
@@ -48,11 +49,14 @@ REQUEST_DURATION = Histogram('http_request_duration_seconds', 'HTTP request dura
 async def lifespan(app: FastAPI):
     """Application lifespan context manager."""
     logger.info("Starting Caten API server", version="1.0.0")
+    # Initialize database connection
+    await init_db()
     # Start rate limiter cleanup task
     await rate_limiter.start_cleanup_task()
     yield
     logger.info("Shutting down Caten API server")
     await rate_limiter.close()
+    await close_db()
 
 
 # Create FastAPI application
@@ -89,7 +93,8 @@ app.add_middleware(
         "Content-Transfer-Encoding",
         "X-File-Name",
         "X-File-Size",
-        "X-File-Type"
+        "X-File-Type",
+        "X-DEVICE-ID"
     ],
     expose_headers=[
         "Content-Length",
@@ -112,7 +117,7 @@ async def cors_preflight_handler(request: Request, call_next):
         response = Response()
         response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type, X-DEVICE-ID"
         response.headers["Access-Control-Max-Age"] = "3600"
         response.headers["Access-Control-Allow-Credentials"] = "true"
         response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers"
@@ -178,6 +183,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 
 # Include routers
 app.include_router(health.router)
+app.include_router(auth.router, prefix="/auth", tags=["Authentication"])
 app.include_router(v1_api.router)
 app.include_router(v2_api.router)
 

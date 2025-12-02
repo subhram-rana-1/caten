@@ -71,6 +71,19 @@ class Settings(BaseSettings):
     # Monitoring
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=9090, description="Metrics server port")
+    
+    # Authentication Configuration
+    google_client_id: str = Field(..., description="Google OAuth 2.0 Client ID for ID token verification")
+    jwt_secret: str = Field(..., description="Secret key for JWT signing (HS256) or private key path (RS256)")
+    jwt_algorithm: str = Field(default="HS256", description="JWT signing algorithm (HS256 or RS256)")
+    access_token_expire_minutes: int = Field(default=15, description="Access token expiration time in minutes")
+    refresh_token_expire_days: int = Field(default=30, description="Refresh token expiration time in days")
+    unauthenticated_device_max_request_count: int = Field(default=20, description="Maximum unauthenticated requests allowed per device")
+    
+    # Database Configuration
+    database_url: str = Field(..., description="MariaDB database connection URL (mariadb+aiomysql://user:password@localhost:3306/dbname)")
+    database_pool_size: int = Field(default=10, description="Database connection pool size")
+    database_max_overflow: int = Field(default=20, description="Maximum database connection pool overflow")
 
 
 # Global settings instance

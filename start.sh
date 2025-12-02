@@ -7,9 +7,8 @@ echo "Starting Caten API Server..."
 
 # Check if .env file exists
 if [ ! -f .env ]; then
-    echo "Warning: .env file not found. Creating from example..."
-    cp environment.example .env
-    echo "Please edit .env file with your configuration before running again."
+    echo "Error: .env file not found."
+    echo "Please create a .env file with your configuration before running the application."
     exit 1
 fi
 

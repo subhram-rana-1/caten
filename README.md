@@ -60,12 +60,7 @@ git clone <repository-url>
 cd caten
 ```
 
-2. Copy environment configuration:
-```bash
-cp environment.example .env
-```
-
-3. Edit `.env` file with your configuration:
+2. Create `.env` file with your configuration:
 ```bash
 OPENAI_API_KEY=your_openai_api_key_here
 ```
@@ -79,11 +74,7 @@ The API will be available at `http://localhost:8000`
 
 ### Using Docker
 
-1. Set up environment:
-```bash
-cp environment.example .env
-# Edit .env with your configuration
-```
+1. Create `.env` file with your configuration:
 
 2. Run with Docker Compose:
 ```bash
@@ -113,6 +104,251 @@ All configuration is managed through environment variables or the `.env` file:
 - `REDIS_URL`: Redis connection URL (default: redis://localhost:6379)
 - `MAX_FILE_SIZE_MB`: Maximum file size in MB (default: 5)
 - `ALLOWED_IMAGE_TYPES`: Allowed image types (default: jpeg,jpg,png,heic)
+
+### Authentication Settings (Required for Auth Features)
+- `GOOGLE_CLIENT_ID`: Google OAuth 2.0 Client ID for ID token verification (required)
+- `JWT_SECRET`: Secret key for JWT signing (HS256) or private key path (RS256) (required)
+- `JWT_ALGORITHM`: JWT signing algorithm - HS256 or RS256 (default: HS256)
+- `ACCESS_TOKEN_EXPIRE_MINUTES`: Access token expiration time in minutes (default: 15)
+- `REFRESH_TOKEN_EXPIRE_DAYS`: Refresh token expiration time in days (default: 30)
+- `UNAUTHENTICATED_DEVICE_MAX_REQUEST_COUNT`: Maximum unauthenticated requests per device (default: 20)
+- `DATABASE_URL`: MariaDB connection URL (required, format: `mariadb+aiomysql://user:password@localhost:3306/dbname`)
+- `DATABASE_POOL_SIZE`: Database connection pool size (default: 10)
+- `DATABASE_MAX_OVERFLOW`: Maximum database connection pool overflow (default: 20)
+
+## Authentication & Session Management
+
+The API includes Google ID token-based authentication with JWT access tokens and refresh tokens. All protected endpoints require a valid access token in the `Authorization: Bearer <token>` header.
+
+### Database Setup
+
+1. **Create MariaDB Database**:
+```bash
+mysql -u root -p -e "CREATE DATABASE xplaino CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;"
+```
+
+2. **Run Database Migrations**:
+```bash
+# Using Alembic (recommended)
+alembic upgrade head
+
+# Or manually apply schema
+mysql -u root -p xplaino < db-schema.sql
+```
+
+### Authentication Flow
+
+1. **Login**: Chrome extension obtains Google ID token and sends to `/auth/google`
+2. **Token Exchange**: Backend verifies Google token and returns access + refresh tokens
+3. **API Access**: Use access token in `Authorization: Bearer <token>` header
+4. **Token Refresh**: Exchange refresh token for new access token via `/auth/refresh`
+5. **Logout**: Revoke refresh tokens via `/auth/logout`
+
+### Authentication API Endpoints
+
+#### POST /auth/google
+Exchange Google ID token for backend session tokens.
+
+**Request**:
+```json
+{
+  "id_token": "<Google ID token JWT>",
+  "device_id": "<uuid>",
+  "device_info": "<optional string>"
+}
+```
+
+**Success Response (200)**:
+```json
+{
+  "access_token": "<backend_jwt>",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "refresh_token": "<opaque_refresh_token>",
+  "user": {
+    "id": 123,
+    "email": "user@example.com",
+    "name": "User Name",
+    "picture_url": "https://..."
+  }
+}
+```
+
+**Error Responses**:
+- `400 BAD_REQUEST`: Missing id_token or device_id
+  ```json
+  {
+    "error_code": "BAD_REQUEST",
+    "error_reason": "Missing id_token or device_id"
+  }
+  ```
+- `401 UNAUTHORIZED`: Invalid Google token
+  ```json
+  {
+    "error_code": "INVALID_GOOGLE_TOKEN",
+    "error_reason": "Google token invalid or expired"
+  }
+  ```
+
+#### POST /auth/refresh
+Exchange refresh token for new access token (with token rotation).
+
+**Request**:
+```json
+{
+  "refresh_token": "<opaque_refresh_token>",
+  "device_id": "<uuid>"
+}
+```
+
+**Success Response (200)**:
+```json
+{
+  "access_token": "<new_backend_jwt>",
+  "token_type": "bearer",
+  "expires_in": 900,
+  "refresh_token": "<new_refresh_token>"
+}
+```
+
+**Error Responses**:
+- `400 BAD_REQUEST`: Malformed request
+- `401 UNAUTHORIZED`: Invalid/expired/revoked refresh token
+  ```json
+  {
+    "error_code": "INVALID_REFRESH_TOKEN",
+    "error_reason": "Refresh token invalid or revoked"
+  }
+  ```
+
+#### POST /auth/logout
+Revoke refresh tokens for the authenticated user.
+
+**Request** (requires `Authorization: Bearer <access_token>` header):
+```json
+{
+  "revoke_all": false
+}
+```
+
+**Success Response (200)**:
+```json
+{
+  "ok": true
+}
+```
+
+**Error Responses**:
+- `401 UNAUTHORIZED`: Invalid access token
+  ```json
+  {
+    "error_code": "INVALID_ACCESS_TOKEN",
+    "error_reason": "Access token invalid or malformed"
+  }
+  ```
+
+#### GET /auth/profile
+Get current authenticated user's profile.
+
+**Request** (requires `Authorization: Bearer <access_token>` header):
+No request body
+
+**Success Response (200)**:
+```json
+{
+  "id": 123,
+  "email": "user@example.com",
+  "name": "User Name",
+  "picture_url": "https://...",
+  "created_at": "2024-01-01T00:00:00Z",
+  "last_login_at": "2024-01-01T00:00:00Z",
+  "is_active": true
+}
+```
+
+### Device-Based Unauthenticated Request Limits
+
+For endpoints that don't require authentication, the API tracks requests per device:
+
+- Every request must include `X-DEVICE-ID: <device_id>` header (UUID string)
+- If `Authorization` header is missing, the backend checks device request count
+- Default limit: 20 unauthenticated requests per device (configurable via `UNAUTHENTICATED_DEVICE_MAX_REQUEST_COUNT`)
+- If limit exceeded, returns:
+  ```json
+  {
+    "error_code": "TOKEN_NOT_PROVIDED_LIMIT_EXCEEDED",
+    "error_reason": "Request token missing and unauthenticated device exceeded allowed anonymous requests"
+  }
+  ```
+- If `Authorization` header is present and token is valid, device counter is not incremented
+
+### Example API Usage
+
+#### 1. Login with Google ID Token
+```bash
+curl -X POST http://localhost:8000/auth/google \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id_token": "<google_id_token>",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000",
+    "device_info": "Chrome Extension"
+  }'
+```
+
+#### 2. Use Access Token for Protected Endpoint
+```bash
+curl -X GET http://localhost:8000/auth/profile \
+  -H "Authorization: Bearer <access_token>" \
+  -H "X-DEVICE-ID: 550e8400-e29b-41d4-a716-446655440000"
+```
+
+#### 3. Refresh Access Token
+```bash
+curl -X POST http://localhost:8000/auth/refresh \
+  -H "Content-Type: application/json" \
+  -d '{
+    "refresh_token": "<refresh_token>",
+    "device_id": "550e8400-e29b-41d4-a716-446655440000"
+  }'
+```
+
+#### 4. Logout
+```bash
+curl -X POST http://localhost:8000/auth/logout \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "revoke_all": false
+  }'
+```
+
+#### 5. Unauthenticated Request (Device Counting)
+```bash
+curl -X GET http://localhost:8000/api/v1/some-endpoint \
+  -H "X-DEVICE-ID: 550e8400-e29b-41d4-a716-446655440000"
+```
+
+### Security Practices
+
+- **Google Token Verification**: Tokens are verified locally using Google's public keys (no external API calls except key downloads)
+- **Refresh Token Hashing**: Refresh tokens are hashed (SHA256) before storage; only hashes are stored in database
+- **Token Rotation**: Refresh tokens are rotated on each refresh (old token revoked, new token issued)
+- **Short-Lived Access Tokens**: Access tokens expire in 15 minutes (configurable)
+- **Token Revocation**: Refresh tokens are revoked on logout
+- **Device Tracking**: Unauthenticated requests are tracked per device to prevent abuse
+- **JWT Signing**: Access tokens are signed with HS256 (configurable to RS256)
+- **TLS Required**: All production deployments should use TLS/HTTPS
+
+### Error Codes
+
+Authentication-related error codes:
+- `BAD_REQUEST`: Missing required fields in request
+- `INVALID_GOOGLE_TOKEN`: Google ID token invalid or expired
+- `INVALID_ACCESS_TOKEN`: Access token invalid, malformed, or user not found
+- `ACCESS_TOKEN_EXPIRED`: Access token has expired (use refresh endpoint)
+- `INVALID_REFRESH_TOKEN`: Refresh token invalid, expired, or revoked
+- `TOKEN_NOT_PROVIDED_LIMIT_EXCEEDED`: Unauthenticated device exceeded request limit
+- `INTERNAL_ERROR`: Internal server error
 
 ## Development
 
@@ -180,17 +416,101 @@ Common error codes:
 app/
 ├── main.py              # FastAPI application
 ├── config.py            # Configuration management
+├── database.py          # Database connection and session management
 ├── exceptions.py        # Custom exceptions and handlers
 ├── models.py           # Pydantic models
 ├── routes/             # API routes
-│   ├── api.py          # Main API endpoints
+│   ├── v1_api.py       # V1 API endpoints
+│   ├── v2_api.py       # V2 API endpoints
+│   ├── auth.py         # Authentication endpoints
 │   └── health.py       # Health check endpoints
+├── auth/               # Authentication module
+│   ├── models.py       # SQLAlchemy Core table definitions
+│   ├── schemas.py      # Pydantic DTOs for auth
+│   ├── auth_dep.py     # Auth dependencies and middleware
+│   ├── token_service.py # JWT and refresh token services
+│   └── google_auth.py  # Google ID token verification
 └── services/           # Business logic services
     ├── image_service.py    # Image processing
     ├── text_service.py     # Text analysis
     ├── rate_limiter.py     # Rate limiting
     └── llm/               # LLM services
         └── open_ai.py      # OpenAI integration
+```
+
+## Testing Plan
+
+### Unit Tests
+
+1. **Token Verification**:
+   - Test JWT access token generation and verification
+   - Test refresh token hashing and verification
+   - Test token expiration handling
+   - Test invalid token rejection
+
+2. **Refresh Token Rotation**:
+   - Test old token revocation on refresh
+   - Test new token generation and storage
+   - Test token lookup by device_id
+
+3. **Device Count Increment**:
+   - Test atomic increment of device request count
+   - Test blocking when limit exceeded
+   - Test concurrent request handling
+
+4. **Logout Revocation**:
+   - Test token revocation for single device
+   - Test token revocation for all devices
+
+### Integration Tests
+
+1. **Login Flow**:
+   - Mock Google ID token verification
+   - Test user creation/update
+   - Test token generation and storage
+   - Verify response format
+
+2. **Refresh Flow**:
+   - Test refresh token lookup
+   - Test token rotation
+   - Test new access token generation
+
+3. **Protected Endpoints**:
+   - Test access with valid token
+   - Test rejection with invalid/expired token
+   - Test device counting for unauthenticated requests
+
+4. **Concurrent Device Counting**:
+   - Test multiple simultaneous requests from same device
+   - Verify atomic increment behavior
+   - Test limit enforcement
+
+### Example Test Structure
+
+```python
+# tests/test_auth.py
+import pytest
+from app.auth.token_service import generate_access_token, verify_access_token
+from app.auth.auth_dep import get_current_user_or_device
+
+@pytest.mark.asyncio
+async def test_access_token_generation():
+    token = generate_access_token(user_id=1, email="test@example.com", device_id="device-123")
+    assert token is not None
+    
+    payload = verify_access_token(token)
+    assert payload["sub"] == "1"
+    assert payload["email"] == "test@example.com"
+
+@pytest.mark.asyncio
+async def test_device_count_increment(db_session):
+    # Test device count increment logic
+    pass
+
+@pytest.mark.asyncio
+async def test_refresh_token_rotation(db_session):
+    # Test refresh token rotation on /auth/refresh
+    pass
 ```
 
 ## Production Deployment
@@ -228,11 +548,14 @@ Example deployment configuration is available in the `k8s/` directory (if provid
 
 ## Security
 
-- All endpoints are currently unauthenticated but designed for easy auth integration
-- File uploads are validated for type and size
-- Rate limiting prevents abuse
-- Input validation on all endpoints
-- Structured error responses don't leak sensitive information
+- **Authentication**: Google ID token-based authentication with JWT access tokens and refresh tokens
+- **Token Security**: Refresh tokens are hashed before storage; access tokens are short-lived (15 min default)
+- **Device Limits**: Unauthenticated requests are limited per device (20 requests default)
+- **File Uploads**: Validated for type and size
+- **Rate Limiting**: Prevents abuse with configurable limits
+- **Input Validation**: All endpoints validate input using Pydantic
+- **Error Handling**: Structured error responses don't leak sensitive information
+- **TLS**: All production deployments should use HTTPS/TLS
 
 ## License
 

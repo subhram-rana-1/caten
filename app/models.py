@@ -1,6 +1,7 @@
 """Pydantic models for request/response validation."""
 
 from typing import List, Optional
+from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -102,3 +103,21 @@ class RandomParagraphResponse(BaseModel):
     
     text: str = Field(..., description="Generated random paragraph text")
     topicName: str = Field(..., description="Generated topic name for the paragraph")
+
+
+class AuthVendor(str, Enum):
+    """Authentication vendor enum."""
+    GOOGLE = "GOOGLE"
+
+
+class LoginRequest(BaseModel):
+    """Request model for login."""
+    
+    authVendor: AuthVendor = Field(..., description="Authentication vendor")
+    idToken: str = Field(..., description="ID token from OAuth provider")
+
+
+class LoginResponse(BaseModel):
+    """Response model for login."""
+    
+    accessToken: str = Field(..., description="JWT access token")

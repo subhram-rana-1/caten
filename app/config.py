@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     # Monitoring
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=9090, description="Metrics server port")
+    
+    # Authentication Configuration
+    google_oauth_client_id: str = Field(..., description="Google OAuth Client ID")
+    jwt_secret_key: str = Field(..., description="JWT secret key for signing tokens")
+    jwt_algorithm: str = Field(default="HS256", description="JWT algorithm")
+    access_token_expiry_hours: int = Field(default=24, description="Access token expiry in hours")
+    refresh_token_expiry_days: int = Field(default=30, description="Refresh token expiry in days")
+    
+    # Database Configuration
+    database_url: str = Field(..., description="MariaDB database connection URL")
 
 
 # Global settings instance

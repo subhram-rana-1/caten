@@ -15,7 +15,7 @@ from app.exceptions import (
     general_exception_handler,
     http_exception_handler
 )
-from app.routes import v1_api, v2_api, health
+from app.routes import v1_api, v2_api, health, auth_api
 from app.services.rate_limiter import rate_limiter
 
 # Configure structured logging
@@ -180,6 +180,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.include_router(health.router)
 app.include_router(v1_api.router)
 app.include_router(v2_api.router)
+app.include_router(auth_api.router)
 
 
 @app.get("/metrics", include_in_schema=False)

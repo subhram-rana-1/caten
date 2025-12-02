@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS user (
 -- Google user authentication info table
 CREATE TABLE IF NOT EXISTS google_user_auth_info (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    user_id CHAR(36) NOT NULL,
     iss VARCHAR(256),
     sub VARCHAR(256),
     email VARCHAR(256),
@@ -30,7 +31,9 @@ CREATE TABLE IF NOT EXISTS google_user_auth_info (
     hd VARCHAR(256),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_sub (sub)
+    INDEX idx_sub (sub),
+    INDEX idx_user_id (user_id),
+    FOREIGN KEY (user_id) REFERENCES user(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- User session table
@@ -38,7 +41,7 @@ CREATE TABLE IF NOT EXISTS user_session (
     id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
     auth_vendor_type ENUM('GOOGLE') NOT NULL,
     auth_vendor_id CHAR(36) NOT NULL,
-    access_token_state ENUM('VALID', 'INVALID') NOT NULL,
+    access_token_state ENUM('VALID', 'INVALID') NOT NULL DEFAULT 'VALID',
     refresh_token VARCHAR(256) NOT NULL,
     refresh_token_expires_at TIMESTAMP NOT NULL,
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,

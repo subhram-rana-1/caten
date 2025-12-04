@@ -117,11 +117,20 @@ class LoginRequest(BaseModel):
     idToken: str = Field(..., description="ID token from OAuth provider")
 
 
+class LogoutRequest(BaseModel):
+    """Request model for logout."""
+    
+    authVendor: AuthVendor = Field(..., description="Authentication vendor")
+    accessToken: str = Field(..., description="JWT access token")
+
+
 class UserInfo(BaseModel):
     """User information model."""
     
     id: str = Field(..., description="User ID (UUID)")
     name: str = Field(..., description="User's full name")
+    firstName: Optional[str] = Field(default=None, description="User's first name")
+    lastName: Optional[str] = Field(default=None, description="User's last name")
     email: str = Field(..., description="User's email address")
     picture: Optional[str] = Field(default=None, description="User's profile picture URL")
 

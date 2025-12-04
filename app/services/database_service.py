@@ -1,6 +1,6 @@
 """Database service for user and session management."""
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Optional, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -153,7 +153,7 @@ def get_or_create_user_session(
     """
     # Generate new refresh token
     refresh_token = secrets.token_urlsafe(32)
-    expires_at = datetime.utcnow() + timedelta(days=settings.refresh_token_expiry_days)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expiry_days)
     
     if is_new_user:
         # Generate session_id
@@ -240,4 +240,124 @@ def get_or_create_user_session(
     
     db.commit()
     return session_id, refresh_token, expires_at
+
+
+def invalidate_user_session(
+    db: Session,
+    auth_vendor_type: str,
+    sub: str
+) -> bool:
+    """
+    Invalidate user session by marking access_token_state as INVALID.
+    
+    Args:
+        db: Database session
+        auth_vendor_type: Authentication vendor type (e.g., 'GOOGLE')
+        sub: Google user ID (sub field)
+        
+    Returns:
+        True if session was found and invalidated, False otherwise
+    """
+    # First, get the google_auth_info_id from sub
+    google_auth_result = db.execute(
+        text("SELECT id FROM google_user_auth_info WHERE sub = :sub"),
+        {"sub": sub}
+    ).fetchone()
+    
+    if not google_auth_result:
+        logger.warning("No google_auth_info found for sub", sub=sub)
+        return False
+    
+    google_auth_info_id = google_auth_result[0]
+    
+    # Update the session to mark it as INVALID
+    result = db.execute(
+        text("""
+            UPDATE user_session 
+            SET access_token_state = 'INVALID',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE auth_vendor_type = :auth_vendor_type 
+            AND auth_vendor_id = :auth_vendor_id
+            AND access_token_state = 'VALID'
+        """),
+        {
+            "auth_vendor_type": auth_vendor_type,
+            "auth_vendor_id": google_auth_info_id
+        }
+    )
+    
+    db.commit()
+    
+    if result.rowcount > 0:
+        logger.info(
+            "Session invalidated successfully",
+            auth_vendor_type=auth_vendor_type,
+            sub=sub,
+            google_auth_info_id=google_auth_info_id
+        )
+        return True
+    else:
+        logger.warning(
+            "No valid session found to invalidate",
+            auth_vendor_type=auth_vendor_type,
+            sub=sub,
+            google_auth_info_id=google_auth_info_id
+        )
+        return False
+
+
+def get_user_info_by_sub(
+    db: Session,
+    sub: str
+) -> Optional[dict]:
+    """
+    Get user information by Google sub.
+    
+    Args:
+        db: Database session
+        sub: Google user ID (sub field)
+        
+    Returns:
+        Dictionary with user information (user_id, name, first_name, last_name, email, picture)
+        or None if user not found
+    """
+    result = db.execute(
+        text("""
+            SELECT 
+                u.id as user_id,
+                g.given_name,
+                g.family_name,
+                g.email,
+                g.picture
+            FROM google_user_auth_info g
+            INNER JOIN user u ON g.user_id = u.id
+            WHERE g.sub = :sub
+        """),
+        {"sub": sub}
+    ).fetchone()
+    
+    if not result:
+        logger.warning("User not found for sub", sub=sub)
+        return None
+    
+    user_id, given_name, family_name, email, picture = result
+    
+    # Construct full name
+    name_parts = []
+    if given_name:
+        name_parts.append(given_name)
+    if family_name:
+        name_parts.append(family_name)
+    name = " ".join(name_parts).strip() if name_parts else ""
+    
+    logger.info("User info retrieved", user_id=user_id, sub=sub, email=email)
+    
+    return {
+        "user_id": user_id,
+        "name": name,
+        "first_name": given_name,
+        "last_name": family_name,
+        "email": email,
+        "picture": picture
+    }
 

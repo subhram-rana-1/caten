@@ -80,7 +80,19 @@ class Settings(BaseSettings):
     refresh_token_expiry_days: int = Field(default=30, description="Refresh token expiry in days")
     
     # Database Configuration
-    database_url: str = Field(..., description="MariaDB database connection URL")
+    db_host: str = Field(..., description="Database host")
+    db_user: str = Field(default="root", description="Database user")
+    db_password: str = Field(default="", description="Database password")
+    db_name: str = Field(..., description="Database name")
+    db_port: int = Field(default=3306, description="Database port")
+    
+    @property
+    def database_url(self) -> str:
+        """Construct database connection URL from individual fields."""
+        if self.db_password:
+            return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        else:
+            return f"mysql+pymysql://{self.db_user}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 # Global settings instance

@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 import structlog
 
 from app.config import settings
-from app.models import LoginRequest, LoginResponse, AuthVendor
+from app.models import LoginRequest, LoginResponse, AuthVendor, UserInfo
 from app.database.connection import get_db
 from app.services.auth_service import validate_google_authentication
 from app.services.jwt_service import generate_access_token, get_token_expiry
@@ -111,7 +111,21 @@ async def login(
                 email=google_data.get('email')
             )
             
-            return LoginResponse(accessToken=access_token)
+            # Construct user info
+            user_info = UserInfo(
+                id=user_id,
+                name=name,
+                email=google_data.get('email', ''),
+                picture=google_data.get('picture')
+            )
+            
+            # Return new response structure
+            return LoginResponse(
+                isLoggedIn=True,
+                accessToken=access_token,
+                accessTokenExpiresAt=int(expire_at.timestamp()),
+                user=user_info
+            )
         
         else:
             # Unsupported auth vendor

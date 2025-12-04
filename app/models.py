@@ -117,7 +117,19 @@ class LoginRequest(BaseModel):
     idToken: str = Field(..., description="ID token from OAuth provider")
 
 
+class UserInfo(BaseModel):
+    """User information model."""
+    
+    id: str = Field(..., description="User ID (UUID)")
+    name: str = Field(..., description="User's full name")
+    email: str = Field(..., description="User's email address")
+    picture: Optional[str] = Field(default=None, description="User's profile picture URL")
+
+
 class LoginResponse(BaseModel):
     """Response model for login."""
     
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
     accessToken: str = Field(..., description="JWT access token")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    user: UserInfo = Field(..., description="User information")

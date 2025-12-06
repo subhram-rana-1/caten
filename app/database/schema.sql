@@ -44,9 +44,18 @@ CREATE TABLE IF NOT EXISTS user_session (
     access_token_state ENUM('VALID', 'INVALID') NOT NULL DEFAULT 'VALID',
     refresh_token VARCHAR(256) NOT NULL,
     refresh_token_expires_at TIMESTAMP NOT NULL,
+    access_token_expires_at TIMESTAMP NOT NULL DEFAULT (CURRENT_TIMESTAMP + INTERVAL 24 HOUR),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_refresh_token (refresh_token),
     INDEX idx_auth_vendor (auth_vendor_type, auth_vendor_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- Unauthenticated user API usage table
+CREATE TABLE IF NOT EXISTS unauthenticated_user_api_usage (
+    user_id CHAR(36) PRIMARY KEY DEFAULT (UUID()),
+    api_usage JSON NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 

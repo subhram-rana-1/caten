@@ -1,12 +1,13 @@
 """Database service for user and session management."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, Any
 from sqlalchemy.orm import Session
 from sqlalchemy import text
 import secrets
 import uuid
 import structlog
+import json
 
 from app.config import settings
 
@@ -154,6 +155,7 @@ def get_or_create_user_session(
     # Generate new refresh token
     refresh_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expiry_days)
+    access_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
     
     if is_new_user:
         # Generate session_id
@@ -164,17 +166,18 @@ def get_or_create_user_session(
             text("""
                 INSERT INTO user_session 
                 (id, auth_vendor_type, auth_vendor_id, access_token_state,
-                 refresh_token, refresh_token_expires_at)
+                 refresh_token, refresh_token_expires_at, access_token_expires_at)
                 VALUES 
                 (:id, :auth_vendor_type, :auth_vendor_id, 'VALID',
-                 :refresh_token, :refresh_token_expires_at)
+                 :refresh_token, :refresh_token_expires_at, :access_token_expires_at)
             """),
             {
                 "id": session_id,
                 "auth_vendor_type": auth_vendor_type,
                 "auth_vendor_id": auth_vendor_id,
                 "refresh_token": refresh_token,
-                "refresh_token_expires_at": expires_at
+                "refresh_token_expires_at": expires_at,
+                "access_token_expires_at": access_token_expires_at
             }
         )
         db.flush()
@@ -204,13 +207,15 @@ def get_or_create_user_session(
                     SET access_token_state = 'VALID',
                         refresh_token = :refresh_token,
                         refresh_token_expires_at = :refresh_token_expires_at,
+                        access_token_expires_at = :access_token_expires_at,
                         updated_at = CURRENT_TIMESTAMP
                     WHERE id = :session_id
                 """),
                 {
                     "session_id": session_id,
                     "refresh_token": refresh_token,
-                    "refresh_token_expires_at": expires_at
+                    "refresh_token_expires_at": expires_at,
+                    "access_token_expires_at": access_token_expires_at
                 }
             )
             logger.info("Updated existing session", session_id=session_id)
@@ -222,17 +227,18 @@ def get_or_create_user_session(
                 text("""
                     INSERT INTO user_session 
                     (id, auth_vendor_type, auth_vendor_id, access_token_state,
-                     refresh_token, refresh_token_expires_at)
+                     refresh_token, refresh_token_expires_at, access_token_expires_at)
                     VALUES 
                     (:id, :auth_vendor_type, :auth_vendor_id, 'VALID',
-                     :refresh_token, :refresh_token_expires_at)
+                     :refresh_token, :refresh_token_expires_at, :access_token_expires_at)
                 """),
                 {
                     "id": session_id,
                     "auth_vendor_type": auth_vendor_type,
                     "auth_vendor_id": auth_vendor_id,
                     "refresh_token": refresh_token,
-                    "refresh_token_expires_at": expires_at
+                    "refresh_token_expires_at": expires_at,
+                    "access_token_expires_at": access_token_expires_at
                 }
             )
             db.flush()
@@ -360,4 +366,259 @@ def get_user_info_by_sub(
         "email": email,
         "picture": picture
     }
+
+
+def get_unauthenticated_user_usage(
+    db: Session,
+    user_id: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Get unauthenticated user API usage record.
+    
+    Args:
+        db: Database session
+        user_id: Unauthenticated user ID (UUID)
+        
+    Returns:
+        Dictionary with api_usage JSON data or None if not found
+    """
+    result = db.execute(
+        text("SELECT api_usage FROM unauthenticated_user_api_usage WHERE user_id = :user_id"),
+        {"user_id": user_id}
+    ).fetchone()
+    
+    if not result:
+        return None
+    
+    api_usage_json = result[0]
+    if isinstance(api_usage_json, str):
+        api_usage = json.loads(api_usage_json)
+    else:
+        api_usage = api_usage_json
+    
+    return api_usage
+
+
+def create_unauthenticated_user_usage(
+    db: Session,
+    api_name: str
+) -> str:
+    """
+    Create a new unauthenticated user API usage record.
+    
+    Args:
+        db: Database session
+        api_name: Name of the API being called (used to initialize counter)
+        
+    Returns:
+        Newly created user_id (UUID)
+    """
+    user_id = str(uuid.uuid4())
+    
+    # Initialize API usage JSON with all counters set to 0
+    api_usage = {
+        "words_explanation_api_count_so_far": 0,
+        "get_more_explanations_api_count_so_far": 0,
+        "ask_api_count_so_far": 0,
+        "simplify_api_count_so_far": 0,
+        "summarise_api_count_so_far": 0,
+        "image_to_text_api_count_so_far": 0,
+        "pdf_to_text_api_count_so_far": 0,
+        "important_words_from_text_v1_api_count_so_far": 0,
+        "words_explanation_v1_api_count_so_far": 0,
+        "get_random_paragraph_api_count_so_far": 0,
+        "important_words_from_text_v2_api_count_so_far": 0,
+        "pronunciation_api_count_so_far": 0,
+        "voice_to_text_api_count_so_far": 0,
+        "translate_api_count_so_far": 0,
+        "web_search_api_count_so_far": 0,
+        "web_search_stream_api_count_so_far": 0
+    }
+    
+    # Set the current API count to 1 (this API was just called)
+    if api_name in api_usage:
+        api_usage[api_name] = 1
+    else:
+        # If api_name is not in the dictionary, add it and set to 1
+        logger.warning(
+            "API name not found in api_usage dictionary, adding it",
+            api_name=api_name
+        )
+        api_usage[api_name] = 1
+    
+    db.execute(
+        text("""
+            INSERT INTO unauthenticated_user_api_usage 
+            (user_id, api_usage)
+            VALUES 
+            (:user_id, :api_usage)
+        """),
+        {
+            "user_id": user_id,
+            "api_usage": json.dumps(api_usage)
+        }
+    )
+    db.commit()
+    
+    logger.info("Created unauthenticated user API usage record", user_id=user_id, api_name=api_name)
+    return user_id
+
+
+def increment_api_usage(
+    db: Session,
+    user_id: str,
+    api_name: str
+) -> None:
+    """
+    Increment the API usage counter for a specific API.
+    
+    Args:
+        db: Database session
+        user_id: Unauthenticated user ID (UUID)
+        api_name: Name of the API counter field to increment
+    """
+    # Get current usage
+    result = db.execute(
+        text("SELECT api_usage FROM unauthenticated_user_api_usage WHERE user_id = :user_id"),
+        {"user_id": user_id}
+    ).fetchone()
+    
+    if not result:
+        logger.warning("Unauthenticated user usage record not found", user_id=user_id)
+        return
+    
+    api_usage_json = result[0]
+    if isinstance(api_usage_json, str):
+        api_usage = json.loads(api_usage_json)
+    else:
+        api_usage = api_usage_json
+    
+    # Increment the counter
+    if api_name in api_usage:
+        api_usage[api_name] = api_usage.get(api_name, 0) + 1
+    else:
+        api_usage[api_name] = 1
+    
+    # Update the record
+    db.execute(
+        text("""
+            UPDATE unauthenticated_user_api_usage 
+            SET api_usage = :api_usage,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = :user_id
+        """),
+        {
+            "user_id": user_id,
+            "api_usage": json.dumps(api_usage)
+        }
+    )
+    db.commit()
+    
+    logger.info("Incremented API usage", user_id=user_id, api_name=api_name, count=api_usage[api_name])
+
+
+def check_api_usage_limit(
+    db: Session,
+    user_id: str,
+    api_name: str,
+    max_limit: int
+) -> bool:
+    """
+    Check if API usage has exceeded the maximum limit.
+    
+    Args:
+        db: Database session
+        user_id: Unauthenticated user ID (UUID)
+        api_name: Name of the API counter field to check
+        max_limit: Maximum allowed usage count
+        
+    Returns:
+        True if limit is exceeded, False otherwise
+    """
+    api_usage = get_unauthenticated_user_usage(db, user_id)
+    
+    if not api_usage:
+        return True  # No record found, consider as limit exceeded
+    
+    current_count = api_usage.get(api_name, 0)
+    return current_count >= max_limit
+
+
+def get_user_session_by_id(
+    db: Session,
+    session_id: str
+) -> Optional[Dict[str, Any]]:
+    """
+    Get user session by session ID.
+    
+    Args:
+        db: Database session
+        session_id: User session ID (primary key)
+        
+    Returns:
+        Dictionary with session data or None if not found
+    """
+    result = db.execute(
+        text("""
+            SELECT id, auth_vendor_type, auth_vendor_id, access_token_state,
+                   refresh_token, refresh_token_expires_at, access_token_expires_at
+            FROM user_session 
+            WHERE id = :session_id
+        """),
+        {"session_id": session_id}
+    ).fetchone()
+    
+    if not result:
+        return None
+    
+    return {
+        "id": result[0],
+        "auth_vendor_type": result[1],
+        "auth_vendor_id": result[2],
+        "access_token_state": result[3],
+        "refresh_token": result[4],
+        "refresh_token_expires_at": result[5],
+        "access_token_expires_at": result[6]
+    }
+
+
+def update_user_session_refresh_token(
+    db: Session,
+    session_id: str
+) -> Tuple[str, datetime]:
+    """
+    Update refresh token and expiry for a user session.
+    
+    Args:
+        db: Database session
+        session_id: User session ID (primary key)
+        
+    Returns:
+        Tuple of (new_refresh_token, new_refresh_token_expires_at)
+    """
+    # Generate new refresh token
+    refresh_token = secrets.token_urlsafe(32)
+    expires_at = datetime.now(timezone.utc) + timedelta(days=30)
+    
+    # Update the session
+    db.execute(
+        text("""
+            UPDATE user_session 
+            SET refresh_token = :refresh_token,
+                refresh_token_expires_at = :refresh_token_expires_at,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :session_id
+        """),
+        {
+            "session_id": session_id,
+            "refresh_token": refresh_token,
+            "refresh_token_expires_at": expires_at
+        }
+    )
+    
+    db.commit()
+    
+    logger.info("Updated refresh token for session", session_id=session_id)
+    
+    return refresh_token, expires_at
 

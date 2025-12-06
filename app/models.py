@@ -121,7 +121,6 @@ class LogoutRequest(BaseModel):
     """Request model for logout."""
     
     authVendor: AuthVendor = Field(..., description="Authentication vendor")
-    accessToken: str = Field(..., description="JWT access token")
 
 
 class UserInfo(BaseModel):
@@ -141,4 +140,5 @@ class LoginResponse(BaseModel):
     isLoggedIn: bool = Field(..., description="Whether the user is logged in")
     accessToken: str = Field(..., description="JWT access token")
     accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
     user: UserInfo = Field(..., description="User information")

@@ -2,7 +2,7 @@
 
 from datetime import datetime, timezone
 import traceback
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 import structlog
@@ -16,7 +16,9 @@ from app.services.database_service import (
     get_or_create_user_by_google_sub, 
     get_or_create_user_session,
     invalidate_user_session,
-    get_user_info_by_sub
+    get_user_info_by_sub,
+    get_user_session_by_id,
+    update_user_session_refresh_token
 )
 from app.exceptions import CatenException
 
@@ -147,7 +149,8 @@ async def login(
                 last_name=family_name,
                 email_verified=google_data.get('email_verified', False),
                 issued_at=issued_at,
-                expire_at=expire_at
+                expire_at=expire_at,
+                user_session_pk=session_id
             )
             
             logger.debug(
@@ -193,6 +196,7 @@ async def login(
                 isLoggedIn=True,
                 accessToken=access_token,
                 accessTokenExpiresAt=int(expire_at.timestamp()),
+                userSessionPk=session_id,
                 user=user_info
             )
         
@@ -248,29 +252,48 @@ async def login(
 )
 async def logout(
     request: LogoutRequest,
+    http_request: Request,
     response: Response,
     db: Session = Depends(get_db)
 ):
     """
     Logout endpoint that invalidates user session.
     
+    - Extracts access token from Authorization header (Bearer token)
     - Decodes the JWT access token to get user information
     - Invalidates the user session by marking it as INVALID
     - Returns response with isLoggedIn=false and user information
     """
     try:
+        # Extract access token from Authorization header
+        auth_header = http_request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            logger.warning("Missing or invalid Authorization header")
+            raise HTTPException(
+                status_code=401,
+                detail="Missing or invalid Authorization header"
+            )
+        
+        access_token = auth_header.replace("Bearer ", "").strip()
+        if not access_token:
+            logger.warning("Empty access token in Authorization header")
+            raise HTTPException(
+                status_code=401,
+                detail="Empty access token"
+            )
+        
         logger.info(
             "Logout request received",
             auth_vendor=request.authVendor,
-            has_access_token=bool(request.accessToken),
-            access_token_length=len(request.accessToken) if request.accessToken else 0
+            has_access_token=bool(access_token),
+            access_token_length=len(access_token)
         )
         
         # Decode the JWT access token
         # For logout, we allow expired tokens since user is logging out anyway
         try:
             logger.debug("Decoding JWT access token")
-            token_payload = decode_access_token(request.accessToken, verify_exp=False)
+            token_payload = decode_access_token(access_token, verify_exp=False)
         except Exception as e:
             logger.warning(
                 "Failed to decode access token",
@@ -335,6 +358,9 @@ async def logout(
             exp_timestamp = token_payload.get('exp')
             access_token_expires_at = exp_timestamp if exp_timestamp else 0
             
+            # Get user_session_pk from token
+            user_session_pk = token_payload.get('user_session_pk', '')
+            
             # Construct user info
             user_info = UserInfo(
                 id=user_data.get('user_id'),
@@ -350,8 +376,9 @@ async def logout(
             # Return response with isLoggedIn=false
             return LoginResponse(
                 isLoggedIn=False,
-                accessToken=request.accessToken,  # Return the same token (though it's now invalidated)
+                accessToken=access_token,  # Return the same token (though it's now invalidated)
                 accessTokenExpiresAt=access_token_expires_at,
+                userSessionPk=user_session_pk,
                 user=user_info
             )
         
@@ -396,5 +423,210 @@ async def logout(
         raise HTTPException(
             status_code=500,
             detail="Internal server error during logout"
+        )
+
+
+@router.post(
+    "/refresh-token",
+    summary="Refresh access token",
+    description="Refresh the access token by validating current access token and refresh token, then issue a new refresh token"
+)
+async def refresh_access_token(
+    request: Request,
+    response: Response,
+    db: Session = Depends(get_db)
+):
+    """
+    Refresh token endpoint that validates current tokens and issues a new refresh token.
+    
+    - Extracts access token from Authorization header (Bearer token)
+    - Extracts refresh token from httpOnly secure cookie
+    - Validates access token and fetches user session
+    - Validates refresh token matches database and hasn't expired
+    - Generates new refresh token and updates database
+    - Returns new refresh token in httpOnly secure cookie
+    """
+    try:
+        logger.info("Refresh token request received")
+        
+        # Extract access token from Authorization header
+        auth_header = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            logger.warning("Missing or invalid Authorization header")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Missing or invalid Authorization header"
+                }
+            )
+        
+        access_token = auth_header.replace("Bearer ", "").strip()
+        if not access_token:
+            logger.warning("Empty access token in Authorization header")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Empty access token"
+                }
+            )
+        
+        # Extract refresh token from cookie
+        refresh_token_from_cookie = request.cookies.get("refreshToken")
+        if not refresh_token_from_cookie:
+            logger.warning("Missing refresh token cookie")
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Missing refresh token"
+                }
+            )
+        
+        # Decode JWT access token to get user_session_pk
+        try:
+            logger.debug("Decoding JWT access token")
+            token_payload = decode_access_token(access_token, verify_exp=False)
+        except Exception as e:
+            logger.warning(
+                "Failed to decode access token",
+                error=str(e),
+                error_type=type(e).__name__
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Invalid access token"
+                }
+            )
+        
+        # Extract user_session_pk from token
+        user_session_pk = token_payload.get("user_session_pk")
+        if not user_session_pk:
+            logger.error("Missing user_session_pk in token payload", token_keys=list(token_payload.keys()))
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Missing user_session_pk in token"
+                }
+            )
+        
+        logger.info("Token decoded successfully", user_session_pk=user_session_pk)
+        
+        # Fetch user_session record by ID
+        session_data = get_user_session_by_id(db, user_session_pk)
+        if not session_data:
+            logger.warning("User session not found", user_session_pk=user_session_pk)
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Session not found"
+                }
+            )
+        
+        # Check if access_token_state is INVALID
+        if session_data.get("access_token_state") != "VALID":
+            logger.warning("User session is INVALID", user_session_pk=user_session_pk)
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Session is invalid"
+                }
+            )
+        
+        # Check if refresh_token_expires_at has expired
+        refresh_token_expires_at = session_data.get("refresh_token_expires_at")
+        if refresh_token_expires_at:
+            if isinstance(refresh_token_expires_at, datetime):
+                expires_at = refresh_token_expires_at
+            else:
+                # Parse if it's a string
+                expires_at = datetime.fromisoformat(str(refresh_token_expires_at).replace('Z', '+00:00'))
+            
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
+            
+            current_time = datetime.now(timezone.utc)
+            if expires_at < current_time:
+                logger.warning(
+                    "Refresh token expired",
+                    user_session_pk=user_session_pk,
+                    expires_at=str(expires_at),
+                    current_time=str(current_time)
+                )
+                raise HTTPException(
+                    status_code=401,
+                    detail={
+                        "errorCode": "LOGIN_REQUIRED",
+                        "reason": "Refresh token expired"
+                    }
+                )
+        
+        # Verify refresh token from cookie matches the one in database
+        refresh_token_from_db = session_data.get("refresh_token")
+        if refresh_token_from_cookie != refresh_token_from_db:
+            logger.warning(
+                "Refresh token mismatch",
+                user_session_pk=user_session_pk
+            )
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "errorCode": "LOGIN_REQUIRED",
+                    "reason": "Invalid refresh token"
+                }
+            )
+        
+        logger.info("Refresh token validated successfully", user_session_pk=user_session_pk)
+        
+        # Generate new refresh token and update database
+        new_refresh_token, new_refresh_token_expires_at = update_user_session_refresh_token(
+            db, user_session_pk
+        )
+        
+        logger.info(
+            "New refresh token generated",
+            user_session_pk=user_session_pk,
+            refresh_token_preview=new_refresh_token[:8] + "..." if new_refresh_token else None,
+            expires_at=str(new_refresh_token_expires_at)
+        )
+        
+        # Set new refresh token in httpOnly secure cookie
+        response.set_cookie(
+            key="refreshToken",
+            value=new_refresh_token,
+            httponly=True,
+            secure=True,
+            samesite="lax",
+            expires=new_refresh_token_expires_at
+        )
+        
+        logger.info("Refresh token updated successfully", user_session_pk=user_session_pk)
+        
+        # Return 200 status with empty response body
+        return Response(status_code=200)
+    
+    except HTTPException as e:
+        logger.warning(
+            "HTTP exception during refresh token",
+            status_code=e.status_code,
+            detail=e.detail
+        )
+        raise
+    except Exception as e:
+        logger.error(
+            "Unexpected error during refresh token",
+            error=str(e),
+            error_type=type(e).__name__,
+            traceback=traceback.format_exc()
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error during token refresh"
         )
 

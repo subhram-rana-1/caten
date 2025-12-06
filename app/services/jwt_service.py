@@ -18,7 +18,8 @@ def generate_access_token(
     last_name: str,
     email_verified: bool,
     issued_at: datetime,
-    expire_at: datetime
+    expire_at: datetime,
+    user_session_pk: str
 ) -> str:
     """
     Generate JWT access token with user information.
@@ -32,6 +33,7 @@ def generate_access_token(
         email_verified: Whether email is verified
         issued_at: Token issue time
         expire_at: Token expiration time
+        user_session_pk: User session primary key (ID from user_session table)
         
     Returns:
         Signed JWT access token string
@@ -43,6 +45,7 @@ def generate_access_token(
         "first_name": first_name,
         "last_name": last_name,
         "email_verified": email_verified,
+        "user_session_pk": user_session_pk,
         "iat": int(issued_at.timestamp()),
         "exp": int(expire_at.timestamp())
     }
@@ -53,7 +56,7 @@ def generate_access_token(
         algorithm=settings.jwt_algorithm
     )
     
-    logger.info("Access token generated", sub=sub, email=email)
+    logger.info("Access token generated", sub=sub, email=email, user_session_pk=user_session_pk)
     return token
 
 

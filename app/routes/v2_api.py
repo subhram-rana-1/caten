@@ -4,7 +4,7 @@ import json
 import os
 from enum import Enum
 from typing import List, Dict, Any, Optional
-from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File
+from fastapi import APIRouter, Request, HTTPException, WebSocket, WebSocketDisconnect, UploadFile, File, Depends, Response
 from fastapi.responses import StreamingResponse, Response
 import structlog
 
@@ -17,6 +17,7 @@ from app.services.text_service import text_service
 from app.services.llm.open_ai import openai_service
 from app.services.rate_limiter import rate_limiter
 from app.services.web_search_service import web_search_service
+from app.services.auth_middleware import authenticate
 from app.exceptions import FileValidationError, ValidationError
 from app.utils.utils import get_client_ip
 from pydantic import BaseModel, Field
@@ -196,9 +197,18 @@ async def get_client_id(request: Request) -> str:
 )
 async def words_explanation_v2(
     request: Request,
-    body: List[WordsExplanationV2Request]
+    response: Response,
+    body: List[WordsExplanationV2Request],
+    auth_context: dict = Depends(authenticate)
 ):
-    """Stream word explanations as they become available for multiple text objects."""
+    """Stream word explanations as they become available for multiple text objects.
+    
+    NOTE: If authenticate() returns a JSONResponse (401/429), this function
+    will NOT execute - FastAPI will use that response directly.
+    """
+    # This log will only appear if the endpoint executes (i.e., auth passed)
+    logger.info("words_explanation_v2 endpoint executing - authentication passed")
+    
     client_id = await get_client_id(request)
     await rate_limiter.check_rate_limit(client_id, "words-explanation")
     
@@ -243,14 +253,18 @@ async def words_explanation_v2(
                text_objects_count=len(body),
                total_words=sum(len(obj.important_words_location) for obj in body))
     
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return StreamingResponse(
         generate_explanations(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )
 
 
@@ -261,7 +275,9 @@ async def words_explanation_v2(
 )
 async def simplify_v2(
     request: Request,
-    body: List[SimplifyRequest]
+    response: Response,
+    body: List[SimplifyRequest],
+    auth_context: dict = Depends(authenticate)
 ):
     """Simplify multiple texts with context from previous simplifications using word-by-word streaming."""
     client_id = await get_client_id(request)
@@ -343,14 +359,18 @@ async def simplify_v2(
     logger.info("Starting text simplifications v2 stream", 
                text_objects_count=len(body))
     
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return StreamingResponse(
         generate_simplifications(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )
 
 
@@ -362,7 +382,9 @@ async def simplify_v2(
 )
 async def important_words_from_text_v2(
     request: Request,
-    body: ImportantWordsV2Request
+    response: Response,
+    body: ImportantWordsV2Request,
+    auth_context: dict = Depends(authenticate)
 ):
     """Extract important words from text with textStartIndex."""
     client_id = await get_client_id(request)
@@ -375,6 +397,9 @@ async def important_words_from_text_v2(
                text_length=len(body.text), 
                words_count=len(word_with_locations),
                textStartIndex=body.textStartIndex)
+    
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
     
     return ImportantWordsV2Response(
         textStartIndex=body.textStartIndex,
@@ -390,7 +415,9 @@ async def important_words_from_text_v2(
 )
 async def ask_v2(
     request: Request,
-    body: AskRequest
+    response: Response,
+    body: AskRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Handle contextual Q&A with chat history using streaming."""
     client_id = await get_client_id(request)
@@ -472,14 +499,18 @@ async def ask_v2(
                chat_history_length=len(body.chat_history),
                has_initial_context=bool(body.initial_context))
 
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+
     return StreamingResponse(
         generate_streaming_answer(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )
 
 
@@ -490,7 +521,9 @@ async def ask_v2(
 )
 async def get_pronunciation(
     request: Request,
-    body: PronunciationRequest
+    response: Response,
+    body: PronunciationRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Generate pronunciation audio for a word."""
     client_id = await get_client_id(request)
@@ -517,13 +550,17 @@ async def get_pronunciation(
                    audio_size=len(audio_bytes))
         
         # Return audio file
+        headers = {
+            "Content-Disposition": f'inline; filename="{body.word}_pronunciation.mp3"',
+            "Cache-Control": "public, max-age=86400"  # Cache for 24 hours
+        }
+        if auth_context.get("is_new_unauthenticated_user"):
+            headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+        
         return Response(
             content=audio_bytes,
             media_type="audio/mpeg",
-            headers={
-                "Content-Disposition": f'inline; filename="{body.word}_pronunciation.mp3"',
-                "Cache-Control": "public, max-age=86400"  # Cache for 24 hours
-            }
+            headers=headers
         )
         
     except HTTPException:
@@ -541,8 +578,10 @@ async def get_pronunciation(
 )
 async def voice_to_text(
     request: Request,
+    response: Response,
     audio_file: UploadFile = File(..., description="Audio file to transcribe"),
-    translate: bool = False
+    translate: bool = False,
+    auth_context: dict = Depends(authenticate)
 ):
     """Convert voice audio to text using OpenAI Whisper.
     
@@ -592,6 +631,9 @@ async def voice_to_text(
                    text_length=len(transcribed_text),
                    translate=translate)
         
+        if auth_context.get("is_new_unauthenticated_user"):
+            response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+        
         return VoiceToTextResponse(text=transcribed_text)
         
     except HTTPException:
@@ -611,7 +653,9 @@ async def voice_to_text(
 )
 async def translate_v2(
     request: Request,
-    body: TranslateRequest
+    response: Response,
+    body: TranslateRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Translate texts to the target language."""
     client_id = await get_client_id(request)
@@ -645,6 +689,9 @@ async def translate_v2(
             translated_count=len(translated_texts)
         )
         
+        if auth_context.get("is_new_unauthenticated_user"):
+            response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+        
         return TranslateResponse(
             targetLangugeCode=body.targetLangugeCode.upper(),
             translatedTexts=translated_texts
@@ -667,7 +714,9 @@ async def translate_v2(
 )
 async def summarise_v2(
     request: Request,
-    body: SummariseRequest
+    response: Response,
+    body: SummariseRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Generate a short, insightful summary of the input text using streaming."""
     client_id = await get_client_id(request)
@@ -742,14 +791,18 @@ async def summarise_v2(
                language_code=body.languageCode,
                has_language_code=body.languageCode is not None)
 
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+
     return StreamingResponse(
         generate_streaming_summary(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )
 
 
@@ -761,7 +814,9 @@ async def summarise_v2(
 )
 async def web_search_v2(
     request: Request,
-    body: WebSearchRequest
+    response: Response,
+    body: WebSearchRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Perform a web search and return structured results in Google Search API format.
     
@@ -813,7 +868,10 @@ async def web_search_v2(
             ))
         
         # Build response
-        response = WebSearchResponse(
+        if auth_context.get("is_new_unauthenticated_user"):
+            response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+        
+        search_response = WebSearchResponse(
             kind=search_results.get("kind", "customsearch#search"),
             searchInformation=search_results.get("searchInformation", {}),
             queries=search_results.get("queries", {}),
@@ -826,7 +884,7 @@ async def web_search_v2(
                    results_count=len(items),
                    search_time=search_results.get("searchInformation", {}).get("searchTime", 0))
         
-        return response
+        return search_response
         
     except HTTPException:
         raise
@@ -847,7 +905,9 @@ async def web_search_v2(
 )
 async def web_search_stream_v2(
     request: Request,
-    body: WebSearchRequest
+    response: Response,
+    body: WebSearchRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Perform a web search and stream results progressively via Server-Sent Events.
     
@@ -914,12 +974,16 @@ async def web_search_stream_v2(
             }
             yield f"data: {json.dumps(error_event)}\n\n"
     
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return StreamingResponse(
         generate_search_stream(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )

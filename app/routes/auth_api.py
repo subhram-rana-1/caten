@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 import structlog
 
 from app.config import settings
-from app.models import LoginRequest, LoginResponse, LogoutRequest, AuthVendor, UserInfo
+from app.models import LoginRequest, LoginResponse, LogoutRequest, AuthVendor, UserInfo, RefreshTokenResponse
 from app.database.connection import get_db
 from app.services.auth_service import validate_google_authentication
 from app.services.jwt_service import generate_access_token, get_token_expiry, decode_access_token
@@ -428,6 +428,7 @@ async def logout(
 
 @router.post(
     "/refresh-token",
+    response_model=RefreshTokenResponse,
     summary="Refresh access token",
     description="Refresh the access token by validating current access token and refresh token, then issue a new refresh token"
 )
@@ -606,10 +607,51 @@ async def refresh_access_token(
             expires=new_refresh_token_expires_at
         )
         
+        # Generate new access token
+        # Extract user info from token payload
+        sub = token_payload.get("sub", "")
+        email = token_payload.get("email", "")
+        name = token_payload.get("name", "")
+        first_name = token_payload.get("first_name", "")
+        last_name = token_payload.get("last_name", "")
+        email_verified = token_payload.get("email_verified", False)
+        
+        # Generate new access token with current timestamp
+        issued_at = datetime.now(timezone.utc)
+        expire_at = get_token_expiry(issued_at)
+        
+        logger.debug(
+            "Generating new access token",
+            sub=sub,
+            email=email,
+            issued_at=str(issued_at),
+            expire_at=str(expire_at)
+        )
+        
+        new_access_token = generate_access_token(
+            sub=sub,
+            email=email,
+            name=name,
+            first_name=first_name,
+            last_name=last_name,
+            email_verified=email_verified,
+            issued_at=issued_at,
+            expire_at=expire_at,
+            user_session_pk=user_session_pk
+        )
+        
+        # Calculate expires_in in seconds
+        expires_in_seconds = settings.access_token_expiry_hours * 3600
+        
         logger.info("Refresh token updated successfully", user_session_pk=user_session_pk)
         
-        # Return 200 status with empty response body
-        return Response(status_code=200)
+        # Return response with new access token
+        return RefreshTokenResponse(
+            access_token=new_access_token,
+            token_type="Bearer",
+            expires_in=expires_in_seconds,
+            scope="openid email profile"
+        )
     
     except HTTPException as e:
         logger.warning(

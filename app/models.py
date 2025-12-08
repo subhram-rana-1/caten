@@ -142,3 +142,12 @@ class LoginResponse(BaseModel):
     accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
     userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
     user: UserInfo = Field(..., description="User information")
+
+
+class RefreshTokenResponse(BaseModel):
+    """Response model for refresh token."""
+    
+    access_token: str = Field(..., description="New JWT access token")
+    token_type: str = Field(default="Bearer", description="Token type")
+    expires_in: int = Field(..., description="Token expiry in seconds")
+    scope: str = Field(default="openid email profile", description="OAuth scope")

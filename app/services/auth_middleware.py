@@ -97,7 +97,7 @@ async def authenticate(
 ) -> Dict[str, Any]:
     """
     Authentication middleware that handles three cases:
-    1. Authenticated user (X-Access-Token header)
+    1. Authenticated user (Authorization header with Bearer token)
     2. Unauthenticated user with ID (X-Unauthenticated-User-Id header)
     3. New unauthenticated user (no headers)
     
@@ -130,7 +130,18 @@ async def authenticate(
     Raises:
         HTTPException: 401 or 429 for authentication/authorization failures
     """
-    access_token = request.headers.get("X-Access-Token")
+    # Extract access token from Authorization header (Bearer <token> format)
+    authorization_header = request.headers.get("Authorization")
+    access_token = None
+    if authorization_header:
+        # Check if it starts with "Bearer "
+        if authorization_header.startswith("Bearer "):
+            access_token = authorization_header[7:].strip()  # Remove "Bearer " prefix
+        else:
+            # Invalid format - treat as no token
+            logger.warning("Invalid Authorization header format - expected 'Bearer <token>'")
+            access_token = None
+    
     unauthenticated_user_id = request.headers.get("X-Unauthenticated-User-Id")
     
     # Get API counter field and max limit for this endpoint
@@ -138,6 +149,7 @@ async def authenticate(
     
     # Case 1: Access token header is available (authenticated user)
     if access_token:
+        print("Case 1: Access token header is available (authenticated user)")
         try:
             # Decode JWT access token
             token_payload = decode_access_token(access_token, verify_exp=False)
@@ -224,6 +236,7 @@ async def authenticate(
     
     # Case 2: Unauthenticated user ID header is available
     elif unauthenticated_user_id:
+        print("Case 2: Unauthenticated user ID header is available")
         # CRITICAL: First check if the user_id exists in the database
         # This must happen BEFORE checking api_counter_field to prevent invalid requests
         api_usage = get_unauthenticated_user_usage(db, unauthenticated_user_id)
@@ -231,11 +244,11 @@ async def authenticate(
         if not api_usage:
             # Record not found - return 429 immediately
             logger.warning(
-                "Unauthenticated user usage record not found - returning 429, endpoint will not execute",
+                "Unauthenticated user usage record not found - returning 401, endpoint will not execute",
                 unauthenticated_user_id=unauthenticated_user_id
             )
             raise HTTPException(
-                status_code=429,
+                status_code=401,
                 detail={
                     "errorCode": "LOGIN_REQUIRED",
                     "message": "Please login"
@@ -293,6 +306,7 @@ async def authenticate(
     
     # Case 3: Neither header present (new unauthenticated user)
     else:
+        print("Case 3: Neither header present (new unauthenticated user)")
         if not api_counter_field or max_limit is None:
             # If we can't determine the API or max limit, return error response (do NOT allow request without tracking)
             logger.warning(

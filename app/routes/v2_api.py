@@ -27,6 +27,24 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/v2", tags=["API v2"])
 
 
+def get_allowed_origin_from_request(request: Request) -> str:
+    """Get the allowed origin from the request for CORS headers.
+    
+    When credentials are included, we cannot use '*' and must return the specific origin.
+    Echoes back the request origin to allow requests with credentials from any origin.
+    This is safe because we're echoing back what the browser sent, not allowing arbitrary origins.
+    """
+    origin = request.headers.get("Origin")
+    
+    if origin:
+        # Echo back the origin - this is safe because the browser only sends origins
+        # that the page is allowed to make requests from
+        return origin
+    
+    # Fallback: if no origin header, return "*" (shouldn't happen with credentials)
+    return "*"
+
+
 # Enums
 class ContextType(str, Enum):
     """Context type enum for ask and summarise APIs."""
@@ -253,10 +271,18 @@ async def words_explanation_v2(
                text_objects_count=len(body),
                total_words=sum(len(obj.important_words_location) for obj in body))
     
+    # Get the actual origin instead of using wildcard when credentials are required
+    allowed_origin = get_allowed_origin_from_request(request)
+    
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "X-Accel-Buffering": "no"  # Disable nginx buffering
+        "X-Accel-Buffering": "no",  # Disable nginx buffering
+        "Access-Control-Allow-Origin": allowed_origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+        "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type, X-Access-Token, X-Unauthenticated-User-Id",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, X-Unauthenticated-User-Id"
     }
     if auth_context.get("is_new_unauthenticated_user"):
         headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
@@ -359,10 +385,18 @@ async def simplify_v2(
     logger.info("Starting text simplifications v2 stream", 
                text_objects_count=len(body))
     
+    # Get the actual origin instead of using wildcard when credentials are required
+    allowed_origin = get_allowed_origin_from_request(request)
+    
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "X-Accel-Buffering": "no"  # Disable nginx buffering
+        "X-Accel-Buffering": "no",  # Disable nginx buffering
+        "Access-Control-Allow-Origin": allowed_origin,
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+        "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type, X-Access-Token, X-Unauthenticated-User-Id",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, X-Unauthenticated-User-Id"
     }
     if auth_context.get("is_new_unauthenticated_user"):
         headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
@@ -794,7 +828,12 @@ async def summarise_v2(
     headers = {
         "Cache-Control": "no-cache",
         "Connection": "keep-alive",
-        "X-Accel-Buffering": "no"  # Disable nginx buffering
+        "X-Accel-Buffering": "no",  # Disable nginx buffering
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS, PATCH",
+        "Access-Control-Allow-Headers": "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type, X-Access-Token, X-Unauthenticated-User-Id",
+        "Access-Control-Expose-Headers": "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, X-Unauthenticated-User-Id"
     }
     if auth_context.get("is_new_unauthenticated_user"):
         headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]

@@ -155,7 +155,7 @@ def get_or_create_user_session(
     # Generate new refresh token
     refresh_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expiry_days)
-    access_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+    access_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=10)  # TODO: make it hours=24
     
     if is_new_user:
         # Generate session_id

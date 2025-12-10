@@ -140,14 +140,35 @@ class LoginResponse(BaseModel):
     isLoggedIn: bool = Field(..., description="Whether the user is logged in")
     accessToken: str = Field(..., description="JWT access token")
     accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    refreshToken: str = Field(..., description="Refresh token for obtaining new access tokens")
+    refreshTokenExpiresAt: int = Field(..., description="Unix timestamp when refresh token expires")
     userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
     user: UserInfo = Field(..., description="User information")
 
 
-class RefreshTokenResponse(BaseModel):
-    """Response model for refresh token."""
+class LogoutResponse(BaseModel):
+    """Response model for logout."""
     
-    access_token: str = Field(..., description="New JWT access token")
-    token_type: str = Field(default="Bearer", description="Token type")
-    expires_in: int = Field(..., description="Token expiry in seconds")
-    scope: str = Field(default="openid email profile", description="OAuth scope")
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
+    accessToken: str = Field(..., description="JWT access token (invalidated)")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
+    user: UserInfo = Field(..., description="User information")
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request model for refresh token."""
+    
+    refreshToken: str = Field(..., description="Refresh token to validate and exchange for new tokens")
+
+
+class RefreshTokenResponse(BaseModel):
+    """Response model for refresh token - identical to LoginResponse."""
+    
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
+    accessToken: str = Field(..., description="JWT access token")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    refreshToken: str = Field(..., description="Refresh token for obtaining new access tokens")
+    refreshTokenExpiresAt: int = Field(..., description="Unix timestamp when refresh token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
+    user: UserInfo = Field(..., description="User information")

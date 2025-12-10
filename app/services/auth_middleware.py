@@ -130,33 +130,107 @@ async def authenticate(
     Raises:
         HTTPException: 401 or 429 for authentication/authorization failures
     """
-    # Extract access token from Authorization header (Bearer <token> format)
+    # Entry log with request metadata
     authorization_header = request.headers.get("Authorization")
+    unauthenticated_user_id = request.headers.get("X-Unauthenticated-User-Id")
+    
+    logger.info(
+        "Authentication middleware called",
+        function="authenticate",
+        path=request.url.path,
+        method=request.method,
+        has_authorization_header=bool(authorization_header),
+        has_unauthenticated_user_id=bool(unauthenticated_user_id)
+    )
+    
+    # Extract access token from Authorization header (Bearer <token> format)
     access_token = None
     if authorization_header:
         # Check if it starts with "Bearer "
         if authorization_header.startswith("Bearer "):
             access_token = authorization_header[7:].strip()  # Remove "Bearer " prefix
+            logger.info(
+                "Access token extracted from Authorization header",
+                function="authenticate",
+                path=request.url.path,
+                access_token_length=len(access_token) if access_token else 0,
+                access_token_preview=access_token[:8] + "..." if access_token and len(access_token) > 8 else None
+            )
         else:
             # Invalid format - treat as no token
-            logger.warning("Invalid Authorization header format - expected 'Bearer <token>'")
+            logger.warning(
+                "Invalid Authorization header format - expected 'Bearer <token>'",
+                function="authenticate",
+                path=request.url.path
+            )
             access_token = None
-    
-    unauthenticated_user_id = request.headers.get("X-Unauthenticated-User-Id")
+    else:
+        logger.debug(
+            "No Authorization header present",
+            function="authenticate",
+            path=request.url.path
+        )
     
     # Get API counter field and max limit for this endpoint
     api_counter_field, max_limit = get_api_counter_field_and_limit(request)
+    logger.debug(
+        "API counter field and limit determined",
+        function="authenticate",
+        path=request.url.path,
+        api_counter_field=api_counter_field,
+        max_limit=max_limit
+    )
+    
+    # CRITICAL STEP: Determine authentication case
+    logger.info(
+        "Determining authentication case",
+        function="authenticate",
+        path=request.url.path,
+        has_access_token=bool(access_token),
+        has_unauthenticated_user_id=bool(unauthenticated_user_id),
+        authentication_case="Case 1: Authenticated" if access_token else ("Case 2: Unauthenticated with ID" if unauthenticated_user_id else "Case 3: New unauthenticated")
+    )
     
     # Case 1: Access token header is available (authenticated user)
     if access_token:
-        print("Case 1: Access token header is available (authenticated user)")
+        access_token_preview = access_token[:8] + "..." if access_token and len(access_token) > 8 else None
+        logger.info(
+            "Case 1: Authenticated user - processing access token",
+            function="authenticate",
+            path=request.url.path,
+            access_token_preview=access_token_preview,
+            access_token_length=len(access_token) if access_token else 0
+        )
         try:
             # Decode JWT access token
+            logger.debug(
+                "Decoding JWT access token",
+                function="authenticate",
+                path=request.url.path,
+                verify_exp=False
+            )
             token_payload = decode_access_token(access_token, verify_exp=False)
+            
+            # CRITICAL STEP: Log successful token decode
+            logger.info(
+                "JWT access token decoded successfully",
+                function="authenticate",
+                path=request.url.path,
+                has_sub=bool(token_payload.get("sub")),
+                has_email=bool(token_payload.get("email")),
+                has_user_session_pk=bool(token_payload.get("user_session_pk")),
+                token_keys=list(token_payload.keys())
+            )
+            
             user_session_pk = token_payload.get("user_session_pk")
             
             if not user_session_pk:
-                logger.warning("Missing user_session_pk in access token")
+                logger.warning(
+                    "Missing user_session_pk in access token",
+                    function="authenticate",
+                    path=request.url.path,
+                    token_keys=list(token_payload.keys())
+                )
                 raise HTTPException(
                     status_code=401,
                     detail={
@@ -165,11 +239,29 @@ async def authenticate(
                     }
                 )
             
+            logger.debug(
+                "User session PK extracted from token",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk
+            )
+            
             # Fetch session from database
+            logger.debug(
+                "Fetching user session from database",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk
+            )
             session_data = get_user_session_by_id(db, user_session_pk)
             
             if not session_data:
-                logger.warning("User session not found", user_session_pk=user_session_pk)
+                logger.warning(
+                    "User session not found",
+                    function="authenticate",
+                    path=request.url.path,
+                    user_session_pk=user_session_pk
+                )
                 raise HTTPException(
                     status_code=401,
                     detail={
@@ -178,9 +270,34 @@ async def authenticate(
                     }
                 )
             
+            logger.debug(
+                "User session retrieved from database",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk,
+                access_token_state=session_data.get("access_token_state")
+            )
+            
+            # CRITICAL STEP: Validate session state
+            session_state = session_data.get("access_token_state")
+            logger.info(
+                "Validating session state",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk,
+                access_token_state=session_state,
+                is_valid=(session_state == "VALID")
+            )
+            
             # Check if session is INVALID
-            if session_data.get("access_token_state") != "VALID":
-                logger.warning("User session is INVALID - returning 401, endpoint will not execute", user_session_pk=user_session_pk)
+            if session_state != "VALID":
+                logger.warning(
+                    "User session is INVALID - returning 401, endpoint will not execute",
+                    function="authenticate",
+                    path=request.url.path,
+                    user_session_pk=user_session_pk,
+                    access_token_state=session_state
+                )
                 raise HTTPException(
                     status_code=401,
                     detail={
@@ -188,6 +305,14 @@ async def authenticate(
                         "reason": "Please login"
                     }
                 )
+            
+            # CRITICAL STEP: Session state validation passed
+            logger.info(
+                "Session state validation passed - session is VALID",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk
+            )
             
             # Check if access_token_expires_at has expired
             access_token_expires_at = session_data.get("access_token_expires_at")
@@ -205,6 +330,8 @@ async def authenticate(
                 if expires_at < current_time:
                     logger.warning(
                         "Access token expired - returning 401, endpoint will not execute",
+                        function="authenticate",
+                        path=request.url.path,
                         user_session_pk=user_session_pk,
                         expires_at=str(expires_at),
                         current_time=str(current_time)
@@ -216,9 +343,42 @@ async def authenticate(
                             "reason": "Please refresh the access token with refresh token"
                         }
                     )
+                else:
+                    # CRITICAL STEP: Token expiry validation passed
+                    logger.info(
+                        "Access token expiry validation passed - token still valid",
+                        function="authenticate",
+                        path=request.url.path,
+                        user_session_pk=user_session_pk,
+                        expires_at=str(expires_at),
+                        current_time=str(current_time),
+                        seconds_until_expiry=int((expires_at - current_time).total_seconds())
+                    )
+            else:
+                logger.debug(
+                    "No access_token_expires_at in session - skipping expiry check",
+                    function="authenticate",
+                    path=request.url.path,
+                    user_session_pk=user_session_pk
+                )
+            
+            # CRITICAL STEP: All validations passed for authenticated user
+            logger.info(
+                "All authentication validations passed for authenticated user",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk,
+                auth_vendor_type=session_data.get("auth_vendor_type")
+            )
             
             # Authenticated user - proceed with request
-            logger.info("Authenticated user request", user_session_pk=user_session_pk)
+            logger.info(
+                "Authentication successful - authenticated user",
+                function="authenticate",
+                path=request.url.path,
+                user_session_pk=user_session_pk,
+                auth_vendor_type=session_data.get("auth_vendor_type")
+            )
             return {
                 "authenticated": True,
                 "user_session_pk": user_session_pk,
@@ -228,7 +388,13 @@ async def authenticate(
         except HTTPException:
             raise
         except Exception as e:
-            logger.error("Error during authentication", error=str(e), error_type=type(e).__name__)
+            logger.error(
+                "Error during authentication - Case 1",
+                function="authenticate",
+                path=request.url.path,
+                error=str(e),
+                error_type=type(e).__name__
+            )
             raise HTTPException(
                 status_code=401,
                 detail="Invalid access token"
@@ -236,15 +402,37 @@ async def authenticate(
     
     # Case 2: Unauthenticated user ID header is available
     elif unauthenticated_user_id:
-        print("Case 2: Unauthenticated user ID header is available")
+        logger.info(
+            "Case 2: Unauthenticated user with ID - processing request",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id
+        )
         # CRITICAL: First check if the user_id exists in the database
         # This must happen BEFORE checking api_counter_field to prevent invalid requests
+        logger.debug(
+            "Fetching unauthenticated user usage record",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id
+        )
         api_usage = get_unauthenticated_user_usage(db, unauthenticated_user_id)
+        
+        # CRITICAL STEP: Check if user usage record exists
+        logger.info(
+            "User usage record lookup completed",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id,
+            record_found=bool(api_usage)
+        )
         
         if not api_usage:
             # Record not found - return 429 immediately
             logger.warning(
                 "Unauthenticated user usage record not found - returning 401, endpoint will not execute",
+                function="authenticate",
+                path=request.url.path,
                 unauthenticated_user_id=unauthenticated_user_id
             )
             raise HTTPException(
@@ -255,13 +443,24 @@ async def authenticate(
                 }
             )
         
+        logger.debug(
+            "Unauthenticated user usage record found",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id,
+            api_usage_keys=list(api_usage.keys())
+        )
+        
         # Now check if we can determine the API counter field and max limit
         if not api_counter_field or max_limit is None:
             # If we can't determine the API, return error response (do NOT allow request)
             logger.warning(
                 "Could not determine API for unauthenticated user - returning 429, endpoint will not execute",
+                function="authenticate",
                 path=request.url.path,
-                unauthenticated_user_id=unauthenticated_user_id
+                unauthenticated_user_id=unauthenticated_user_id,
+                api_counter_field=api_counter_field,
+                max_limit=max_limit
             )
             raise HTTPException(
                 status_code=429,
@@ -271,11 +470,25 @@ async def authenticate(
                 }
             )
         
-        # Check if limit exceeded
+        # CRITICAL STEP: Check if limit exceeded
         current_count = api_usage.get(api_counter_field, 0)
+        logger.info(
+            "Checking API usage limit",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id,
+            api_counter_field=api_counter_field,
+            current_count=current_count,
+            max_limit=max_limit,
+            limit_exceeded=(current_count >= max_limit),
+            remaining_requests=max(0, max_limit - current_count) if max_limit else None
+        )
+        
         if current_count >= max_limit:
             logger.warning(
                 "API usage limit exceeded - returning 429, endpoint will not execute",
+                function="authenticate",
+                path=request.url.path,
                 unauthenticated_user_id=unauthenticated_user_id,
                 api_counter_field=api_counter_field,
                 current_count=current_count,
@@ -289,11 +502,31 @@ async def authenticate(
                 }
             )
         
-        # Increment usage counter
+        # CRITICAL STEP: Increment usage counter
+        logger.info(
+            "Incrementing API usage counter",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id,
+            api_counter_field=api_counter_field,
+            count_before_increment=current_count
+        )
         increment_api_usage(db, unauthenticated_user_id, api_counter_field)
         
+        # CRITICAL STEP: Usage counter incremented successfully
         logger.info(
-            "Unauthenticated user request processed",
+            "API usage counter incremented successfully",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=unauthenticated_user_id,
+            api_counter_field=api_counter_field,
+            count_after_increment=current_count + 1
+        )
+        
+        logger.info(
+            "Authentication successful - unauthenticated user with ID",
+            function="authenticate",
+            path=request.url.path,
             unauthenticated_user_id=unauthenticated_user_id,
             api_counter_field=api_counter_field,
             count_after_increment=current_count + 1
@@ -306,11 +539,26 @@ async def authenticate(
     
     # Case 3: Neither header present (new unauthenticated user)
     else:
-        print("Case 3: Neither header present (new unauthenticated user)")
+        logger.info(
+            "Case 3: New unauthenticated user - processing request",
+            function="authenticate",
+            path=request.url.path
+        )
+        # CRITICAL STEP: Validate API configuration for new user
+        logger.info(
+            "Validating API configuration for new unauthenticated user",
+            function="authenticate",
+            path=request.url.path,
+            api_counter_field=api_counter_field,
+            max_limit=max_limit,
+            configuration_valid=(api_counter_field is not None and max_limit is not None)
+        )
+        
         if not api_counter_field or max_limit is None:
             # If we can't determine the API or max limit, return error response (do NOT allow request without tracking)
             logger.warning(
                 "Could not determine API or max limit for new unauthenticated user - returning 429, endpoint will not execute",
+                function="authenticate",
                 path=request.url.path,
                 api_counter_field=api_counter_field,
                 max_limit=max_limit
@@ -323,11 +571,29 @@ async def authenticate(
                 }
             )
         
-        # Create new unauthenticated user record
+        # CRITICAL STEP: Create new unauthenticated user record
+        logger.info(
+            "Creating new unauthenticated user record",
+            function="authenticate",
+            path=request.url.path,
+            api_counter_field=api_counter_field,
+            max_limit=max_limit
+        )
         new_user_id = create_unauthenticated_user_usage(db, api_counter_field)
         
+        # CRITICAL STEP: New user record created successfully
         logger.info(
-            "New unauthenticated user created",
+            "New unauthenticated user record created successfully",
+            function="authenticate",
+            path=request.url.path,
+            unauthenticated_user_id=new_user_id,
+            api_counter_field=api_counter_field
+        )
+        
+        logger.info(
+            "Authentication successful - new unauthenticated user created",
+            function="authenticate",
+            path=request.url.path,
             unauthenticated_user_id=new_user_id,
             api_counter_field=api_counter_field
         )

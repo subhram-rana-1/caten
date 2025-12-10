@@ -30,7 +30,21 @@ def get_or_create_user_by_google_sub(
     Returns:
         Tuple of (user_id, google_auth_info_id, is_new_user)
     """
+    # Entry log
+    logger.info(
+        "Getting or creating user by Google sub",
+        function="get_or_create_user_by_google_sub",
+        sub=sub,
+        has_email=bool(google_data.get("email")),
+        email_verified=google_data.get("email_verified", False)
+    )
+    
     # Check if sub exists in google_user_auth_info
+    logger.debug(
+        "Querying database for existing user by sub",
+        function="get_or_create_user_by_google_sub",
+        sub=sub
+    )
     result = db.execute(
         text("SELECT id, user_id FROM google_user_auth_info WHERE sub = :sub"),
         {"sub": sub}
@@ -41,6 +55,14 @@ def get_or_create_user_by_google_sub(
         google_auth_info_id = result[0]
         user_id = result[1]
         is_new_user = False
+        
+        logger.debug(
+            "Existing user found, updating google_user_auth_info",
+            function="get_or_create_user_by_google_sub",
+            sub=sub,
+            user_id=user_id,
+            google_auth_info_id=google_auth_info_id
+        )
         
         # Update google_user_auth_info
         db.execute(
@@ -75,13 +97,32 @@ def get_or_create_user_by_google_sub(
             }
         )
         
-        logger.info("Updated existing user", user_id=user_id, sub=sub)
+        logger.info(
+            "Updated existing user",
+            function="get_or_create_user_by_google_sub",
+            user_id=user_id,
+            google_auth_info_id=google_auth_info_id,
+            sub=sub
+        )
     else:
         # New user, create records
         is_new_user = True
         
+        logger.debug(
+            "No existing user found, creating new user",
+            function="get_or_create_user_by_google_sub",
+            sub=sub
+        )
+        
         # Generate user_id
         user_id = str(uuid.uuid4())
+        
+        logger.debug(
+            "Creating user record",
+            function="get_or_create_user_by_google_sub",
+            user_id=user_id,
+            sub=sub
+        )
         
         # Create user record
         db.execute(
@@ -92,6 +133,14 @@ def get_or_create_user_by_google_sub(
         
         # Generate google_auth_info_id
         google_auth_info_id = str(uuid.uuid4())
+        
+        logger.debug(
+            "Creating google_user_auth_info record",
+            function="get_or_create_user_by_google_sub",
+            user_id=user_id,
+            google_auth_info_id=google_auth_info_id,
+            sub=sub
+        )
         
         # Create google_user_auth_info record
         db.execute(
@@ -128,9 +177,26 @@ def get_or_create_user_by_google_sub(
         )
         db.flush()
         
-        logger.info("Created new user", user_id=user_id, sub=sub)
+        logger.info(
+            "Created new user",
+            function="get_or_create_user_by_google_sub",
+            user_id=user_id,
+            google_auth_info_id=google_auth_info_id,
+            sub=sub,
+            email=google_data.get("email")
+        )
     
     db.commit()
+    
+    logger.info(
+        "User lookup/creation completed",
+        function="get_or_create_user_by_google_sub",
+        user_id=user_id,
+        google_auth_info_id=google_auth_info_id,
+        is_new_user=is_new_user,
+        sub=sub
+    )
+    
     return user_id, google_auth_info_id, is_new_user
 
 
@@ -152,14 +218,39 @@ def get_or_create_user_session(
     Returns:
         Tuple of (session_id, refresh_token, refresh_token_expires_at)
     """
+    # Entry log
+    logger.info(
+        "Getting or creating user session",
+        function="get_or_create_user_session",
+        auth_vendor_type=auth_vendor_type,
+        auth_vendor_id=auth_vendor_id,
+        is_new_user=is_new_user
+    )
+    
     # Generate new refresh token
     refresh_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=settings.refresh_token_expiry_days)
-    access_token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=10)  # TODO: make it hours=24
+    access_token_expires_at = datetime.now(timezone.utc) + timedelta(hours=settings.access_token_expiry_hours)
+    
+    refresh_token_preview = refresh_token[:8] + "..." if refresh_token else None
+    logger.debug(
+        "Refresh token generated",
+        function="get_or_create_user_session",
+        refresh_token_preview=refresh_token_preview,
+        expires_at=str(expires_at)
+    )
     
     if is_new_user:
         # Generate session_id
         session_id = str(uuid.uuid4())
+        
+        logger.debug(
+            "Creating new session for new user",
+            function="get_or_create_user_session",
+            session_id=session_id,
+            auth_vendor_type=auth_vendor_type,
+            auth_vendor_id=auth_vendor_id
+        )
         
         # Create new session
         db.execute(
@@ -182,9 +273,21 @@ def get_or_create_user_session(
         )
         db.flush()
         
-        logger.info("Created new session", session_id=session_id)
+        logger.info(
+            "Created new session",
+            function="get_or_create_user_session",
+            session_id=session_id,
+            auth_vendor_type=auth_vendor_type,
+            auth_vendor_id=auth_vendor_id
+        )
     else:
         # Update existing session
+        logger.debug(
+            "Looking up existing session for user",
+            function="get_or_create_user_session",
+            auth_vendor_type=auth_vendor_type,
+            auth_vendor_id=auth_vendor_id
+        )
         session_result = db.execute(
             text("""
                 SELECT id FROM user_session 
@@ -200,6 +303,13 @@ def get_or_create_user_session(
         
         if session_result:
             session_id = session_result[0]
+            logger.debug(
+                "Existing session found, updating",
+                function="get_or_create_user_session",
+                session_id=session_id,
+                auth_vendor_type=auth_vendor_type,
+                auth_vendor_id=auth_vendor_id
+            )
             # Update session
             db.execute(
                 text("""
@@ -218,10 +328,24 @@ def get_or_create_user_session(
                     "access_token_expires_at": access_token_expires_at
                 }
             )
-            logger.info("Updated existing session", session_id=session_id)
+            logger.info(
+                "Updated existing session",
+                function="get_or_create_user_session",
+                session_id=session_id,
+                auth_vendor_type=auth_vendor_type,
+                auth_vendor_id=auth_vendor_id
+            )
         else:
             # No session found, create one
             session_id = str(uuid.uuid4())
+            
+            logger.debug(
+                "No existing session found, creating new session",
+                function="get_or_create_user_session",
+                session_id=session_id,
+                auth_vendor_type=auth_vendor_type,
+                auth_vendor_id=auth_vendor_id
+            )
             
             db.execute(
                 text("""
@@ -242,9 +366,25 @@ def get_or_create_user_session(
                 }
             )
             db.flush()
-            logger.info("Created new session for existing user", session_id=session_id)
+            logger.info(
+                "Created new session for existing user",
+                function="get_or_create_user_session",
+                session_id=session_id,
+                auth_vendor_type=auth_vendor_type,
+                auth_vendor_id=auth_vendor_id
+            )
     
     db.commit()
+    
+    logger.info(
+        "User session operation completed",
+        function="get_or_create_user_session",
+        session_id=session_id,
+        auth_vendor_type=auth_vendor_type,
+        refresh_token_preview=refresh_token_preview,
+        expires_at=str(expires_at)
+    )
+    
     return session_id, refresh_token, expires_at
 
 
@@ -264,17 +404,43 @@ def invalidate_user_session(
     Returns:
         True if session was found and invalidated, False otherwise
     """
+    # Entry log
+    logger.info(
+        "Invalidating user session",
+        function="invalidate_user_session",
+        auth_vendor_type=auth_vendor_type,
+        sub=sub
+    )
+    
     # First, get the google_auth_info_id from sub
+    logger.debug(
+        "Looking up google_auth_info_id by sub",
+        function="invalidate_user_session",
+        sub=sub
+    )
     google_auth_result = db.execute(
         text("SELECT id FROM google_user_auth_info WHERE sub = :sub"),
         {"sub": sub}
     ).fetchone()
     
     if not google_auth_result:
-        logger.warning("No google_auth_info found for sub", sub=sub)
+        logger.warning(
+            "No google_auth_info found for sub",
+            function="invalidate_user_session",
+            sub=sub,
+            auth_vendor_type=auth_vendor_type
+        )
         return False
     
     google_auth_info_id = google_auth_result[0]
+    
+    logger.debug(
+        "Google auth info found, invalidating session",
+        function="invalidate_user_session",
+        sub=sub,
+        google_auth_info_id=google_auth_info_id,
+        auth_vendor_type=auth_vendor_type
+    )
     
     # Update the session to mark it as INVALID
     result = db.execute(
@@ -297,17 +463,21 @@ def invalidate_user_session(
     if result.rowcount > 0:
         logger.info(
             "Session invalidated successfully",
+            function="invalidate_user_session",
             auth_vendor_type=auth_vendor_type,
             sub=sub,
-            google_auth_info_id=google_auth_info_id
+            google_auth_info_id=google_auth_info_id,
+            rows_updated=result.rowcount
         )
         return True
     else:
         logger.warning(
             "No valid session found to invalidate",
+            function="invalidate_user_session",
             auth_vendor_type=auth_vendor_type,
             sub=sub,
-            google_auth_info_id=google_auth_info_id
+            google_auth_info_id=google_auth_info_id,
+            rows_updated=result.rowcount
         )
         return False
 
@@ -327,6 +497,18 @@ def get_user_info_by_sub(
         Dictionary with user information (user_id, name, first_name, last_name, email, picture)
         or None if user not found
     """
+    # Entry log
+    logger.info(
+        "Getting user info by sub",
+        function="get_user_info_by_sub",
+        sub=sub
+    )
+    
+    logger.debug(
+        "Querying database for user info",
+        function="get_user_info_by_sub",
+        sub=sub
+    )
     result = db.execute(
         text("""
             SELECT 
@@ -343,7 +525,11 @@ def get_user_info_by_sub(
     ).fetchone()
     
     if not result:
-        logger.warning("User not found for sub", sub=sub)
+        logger.warning(
+            "User not found for sub",
+            function="get_user_info_by_sub",
+            sub=sub
+        )
         return None
     
     user_id, given_name, family_name, email, picture = result
@@ -356,7 +542,15 @@ def get_user_info_by_sub(
         name_parts.append(family_name)
     name = " ".join(name_parts).strip() if name_parts else ""
     
-    logger.info("User info retrieved", user_id=user_id, sub=sub, email=email)
+    logger.info(
+        "User info retrieved successfully",
+        function="get_user_info_by_sub",
+        user_id=user_id,
+        sub=sub,
+        email=email,
+        has_name=bool(name),
+        has_picture=bool(picture)
+    )
     
     return {
         "user_id": user_id,
@@ -558,6 +752,18 @@ def get_user_session_by_id(
     Returns:
         Dictionary with session data or None if not found
     """
+    # Entry log
+    logger.info(
+        "Getting user session by ID",
+        function="get_user_session_by_id",
+        session_id=session_id
+    )
+    
+    logger.debug(
+        "Querying database for user session",
+        function="get_user_session_by_id",
+        session_id=session_id
+    )
     result = db.execute(
         text("""
             SELECT id, auth_vendor_type, auth_vendor_id, access_token_state,
@@ -569,9 +775,14 @@ def get_user_session_by_id(
     ).fetchone()
     
     if not result:
+        logger.warning(
+            "User session not found",
+            function="get_user_session_by_id",
+            session_id=session_id
+        )
         return None
     
-    return {
+    session_data = {
         "id": result[0],
         "auth_vendor_type": result[1],
         "auth_vendor_id": result[2],
@@ -580,45 +791,111 @@ def get_user_session_by_id(
         "refresh_token_expires_at": result[5],
         "access_token_expires_at": result[6]
     }
+    
+    refresh_token_preview = session_data["refresh_token"][:8] + "..." if session_data["refresh_token"] and len(session_data["refresh_token"]) > 8 else None
+    logger.info(
+        "User session retrieved successfully",
+        function="get_user_session_by_id",
+        session_id=session_id,
+        auth_vendor_type=session_data["auth_vendor_type"],
+        access_token_state=session_data["access_token_state"],
+        refresh_token_preview=refresh_token_preview,
+        has_refresh_token_expires_at=bool(session_data["refresh_token_expires_at"]),
+        has_access_token_expires_at=bool(session_data["access_token_expires_at"])
+    )
+    
+    return session_data
 
 
 def update_user_session_refresh_token(
     db: Session,
-    session_id: str
+        session_id: str,
+    access_token_expires_at: Optional[datetime] = None
 ) -> Tuple[str, datetime]:
     """
     Update refresh token and expiry for a user session.
+    Also updates access_token_expires_at and sets access_token_state to VALID if access_token_expires_at is provided.
     
     Args:
         db: Database session
         session_id: User session ID (primary key)
+        access_token_expires_at: Optional access token expiry datetime. If provided, also updates access_token_expires_at and sets access_token_state to 'VALID'
         
     Returns:
         Tuple of (new_refresh_token, new_refresh_token_expires_at)
     """
+    # Entry log
+    logger.info(
+        "Updating user session refresh token",
+        function="update_user_session_refresh_token",
+        session_id=session_id
+    )
+    
     # Generate new refresh token
     refresh_token = secrets.token_urlsafe(32)
     expires_at = datetime.now(timezone.utc) + timedelta(days=30)
     
-    # Update the session
-    db.execute(
-        text("""
-            UPDATE user_session 
-            SET refresh_token = :refresh_token,
-                refresh_token_expires_at = :refresh_token_expires_at,
-                updated_at = CURRENT_TIMESTAMP
-            WHERE id = :session_id
-        """),
-        {
-            "session_id": session_id,
-            "refresh_token": refresh_token,
-            "refresh_token_expires_at": expires_at
-        }
+    refresh_token_preview = refresh_token[:8] + "..." if refresh_token else None
+    logger.debug(
+        "New refresh token generated",
+        function="update_user_session_refresh_token",
+        session_id=session_id,
+        refresh_token_preview=refresh_token_preview,
+        expires_at=str(expires_at)
     )
+    
+    # Update the session
+    logger.debug(
+        "Updating session in database",
+        function="update_user_session_refresh_token",
+        session_id=session_id,
+        has_access_token_expires_at=access_token_expires_at is not None
+    )
+    
+    # Build SQL query based on whether access_token_expires_at is provided
+    if access_token_expires_at:
+        db.execute(
+            text("""
+                UPDATE user_session 
+                SET refresh_token = :refresh_token,
+                    refresh_token_expires_at = :refresh_token_expires_at,
+                    access_token_expires_at = :access_token_expires_at,
+                    access_token_state = 'VALID',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :session_id
+            """),
+            {
+                "session_id": session_id,
+                "refresh_token": refresh_token,
+                "refresh_token_expires_at": expires_at,
+                "access_token_expires_at": access_token_expires_at
+            }
+        )
+    else:
+        db.execute(
+            text("""
+                UPDATE user_session 
+                SET refresh_token = :refresh_token,
+                    refresh_token_expires_at = :refresh_token_expires_at,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = :session_id
+            """),
+            {
+                "session_id": session_id,
+                "refresh_token": refresh_token,
+                "refresh_token_expires_at": expires_at
+            }
+        )
     
     db.commit()
     
-    logger.info("Updated refresh token for session", session_id=session_id)
+    logger.info(
+        "Refresh token updated successfully",
+        function="update_user_session_refresh_token",
+        session_id=session_id,
+        refresh_token_preview=refresh_token_preview,
+        expires_at=str(expires_at)
+    )
     
     return refresh_token, expires_at
 

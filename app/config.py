@@ -71,6 +71,49 @@ class Settings(BaseSettings):
     # Monitoring
     enable_metrics: bool = Field(default=True, description="Enable Prometheus metrics")
     metrics_port: int = Field(default=9090, description="Metrics server port")
+    
+    # Authentication Configuration
+    google_oauth_client_id: str = Field(..., description="Google OAuth Client ID")
+    jwt_secret_key: str = Field(..., description="JWT secret key for signing tokens")
+    jwt_algorithm: str = Field(default="HS256", description="JWT algorithm")
+    access_token_expiry_hours: int = Field(default=24, description="Access token expiry in hours")
+    refresh_token_expiry_days: int = Field(default=30, description="Refresh token expiry in days")
+    
+    # Database Configuration
+    db_host: str = Field(..., description="Database host")
+    db_user: str = Field(default="root", description="Database user")
+    db_password: str = Field(default="", description="Database password")
+    db_name: str = Field(..., description="Database name")
+    db_port: int = Field(default=3306, description="Database port")
+    
+    # API Usage Limits for Unauthenticated Users
+    # v1 API Limits
+    image_to_text_api_max_limit: int = Field(default=10, description="Max limit for image-to-text API")
+    pdf_to_text_api_max_limit: int = Field(default=10, description="Max limit for pdf-to-text API")
+    important_words_from_text_v1_api_max_limit: int = Field(default=10, description="Max limit for v1 important-words-from-text API")
+    words_explanation_v1_api_max_limit: int = Field(default=10, description="Max limit for v1 words-explanation API")
+    get_more_explanations_api_max_limit: int = Field(default=7, description="Max limit for get-more-explanations API")
+    get_random_paragraph_api_max_limit: int = Field(default=10, description="Max limit for get-random-paragraph API")
+    
+    # v2 API Limits
+    words_explanation_api_max_limit: int = Field(default=5, description="Max limit for v2 words-explanation API")
+    simplify_api_max_limit: int = Field(default=5, description="Max limit for simplify API")
+    important_words_from_text_v2_api_max_limit: int = Field(default=5, description="Max limit for v2 important-words-from-text API")
+    ask_api_max_limit: int = Field(default=10, description="Max limit for ask API")
+    pronunciation_api_max_limit: int = Field(default=5, description="Max limit for pronunciation API")
+    voice_to_text_api_max_limit: int = Field(default=5, description="Max limit for voice-to-text API")
+    translate_api_max_limit: int = Field(default=5, description="Max limit for translate API")
+    summarise_api_max_limit: int = Field(default=3, description="Max limit for summarise API")
+    web_search_api_max_limit: int = Field(default=5, description="Max limit for web-search API")
+    web_search_stream_api_max_limit: int = Field(default=5, description="Max limit for web-search-stream API")
+    
+    @property
+    def database_url(self) -> str:
+        """Construct database connection URL from individual fields."""
+        if self.db_password:
+            return f"mysql+pymysql://{self.db_user}:{self.db_password}@{self.db_host}:{self.db_port}/{self.db_name}"
+        else:
+            return f"mysql+pymysql://{self.db_user}@{self.db_host}:{self.db_port}/{self.db_name}"
 
 
 # Global settings instance

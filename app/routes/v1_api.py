@@ -3,7 +3,7 @@
 import json
 import os
 from typing import List
-from fastapi import APIRouter, UploadFile, File, Request, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, UploadFile, File, Request, HTTPException, WebSocket, WebSocketDisconnect, Depends, Response
 from fastapi.responses import StreamingResponse
 import structlog
 
@@ -25,6 +25,7 @@ from app.services.pdf_service import pdf_service
 from app.services.text_service import text_service
 from app.services.llm.open_ai import openai_service
 from app.services.rate_limiter import rate_limiter
+from app.services.auth_middleware import authenticate
 from app.exceptions import FileValidationError, ValidationError
 from app.utils.utils import get_client_ip
 
@@ -47,7 +48,9 @@ async def get_client_id(request: Request) -> str:
 )
 async def image_to_text(
     request: Request,
-    file: UploadFile = File(..., description="Image file to extract text from")
+    response: Response,
+    file: UploadFile = File(..., description="Image file to extract text from"),
+    auth_context: dict = Depends(authenticate)
 ):
     """Extract text from an uploaded image."""
     client_id = await get_client_id(request)
@@ -70,6 +73,9 @@ async def image_to_text(
     
     logger.info("Successfully extracted text from image", filename=file.filename, text_length=len(extracted_text), topic_name=topic_name)
     
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return ImageToTextResponse(text=extracted_text, topicName=topic_name)
 
 
@@ -81,7 +87,9 @@ async def image_to_text(
 )
 async def pdf_to_text(
     request: Request,
-    file: UploadFile = File(..., description="PDF file to extract text from (max 2MB)")
+    response: Response,
+    file: UploadFile = File(..., description="PDF file to extract text from (max 2MB)"),
+    auth_context: dict = Depends(authenticate)
 ):
     """Extract text from an uploaded PDF and return in optimized markdown format using pdf2markdown4llm."""
     client_id = await get_client_id(request)
@@ -114,6 +122,9 @@ async def pdf_to_text(
     
     logger.info("Successfully extracted text from PDF", filename=file.filename, text_length=len(extracted_text), topic_name=topic_name)
     
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return PdfToTextResponse(text=extracted_text, topicName=topic_name)
 
 
@@ -125,7 +136,9 @@ async def pdf_to_text(
 )
 async def important_words_from_text(
     request: Request,
-    body: ImportantWordsRequest
+    response: Response,
+    body: ImportantWordsRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Extract important words from text."""
     client_id = await get_client_id(request)
@@ -135,6 +148,9 @@ async def important_words_from_text(
     word_with_locations = await text_service.extract_important_words(body.text)
     
     logger.info("Successfully extracted important words", text_length=len(body.text), words_count=len(word_with_locations))
+    
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
     
     return ImportantWordsResponse(
         text=body.text,
@@ -149,7 +165,9 @@ async def important_words_from_text(
 )
 async def words_explanation(
     request: Request,
-    body: WordsExplanationRequest
+    response: Response,
+    body: WordsExplanationRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Stream word explanations as they become available."""
     client_id = await get_client_id(request)
@@ -181,14 +199,18 @@ async def words_explanation(
     
     logger.info("Starting word explanations stream", text_length=len(body.text), words_count=len(body.important_words_location))
     
+    headers = {
+        "Cache-Control": "no-cache",
+        "Connection": "keep-alive",
+        "X-Accel-Buffering": "no"  # Disable nginx buffering
+    }
+    if auth_context.get("is_new_unauthenticated_user"):
+        headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return StreamingResponse(
         generate_explanations(),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
+        headers=headers
     )
 
 
@@ -279,7 +301,9 @@ async def words_explanation_websocket(websocket: WebSocket):
 )
 async def get_more_explanations(
     request: Request,
-    body: MoreExplanationsRequest
+    response: Response,
+    body: MoreExplanationsRequest,
+    auth_context: dict = Depends(authenticate)
 ):
     """Generate additional examples for a word."""
     client_id = await get_client_id(request)
@@ -292,6 +316,9 @@ async def get_more_explanations(
     should_allow_fetch_more = len(all_examples) <= settings.more_examples_threshold
     
     logger.info("Successfully generated more examples", word=body.word, total_examples=len(all_examples), should_allow_fetch_more=should_allow_fetch_more)
+
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
 
     return MoreExplanationsResponse(
         word=body.word,
@@ -308,10 +335,12 @@ async def get_more_explanations(
     description="Generate a random paragraph with configurable word count and difficulty level to help users improve vocabulary skills. Accepts optional topics/keywords as query parameters."
 )
 async def get_random_paragraph(
-    request: Request, 
+    request: Request,
+    response: Response,
     topics: str = None,
     difficulty_level: str = "hard",
-    word_count: int = 100
+    word_count: int = 100,
+    auth_context: dict = Depends(authenticate)
 ):
     """Generate a random paragraph with difficult words for vocabulary learning.
     
@@ -371,6 +400,9 @@ async def get_random_paragraph(
                topics=parsed_topics,
                topic_name=topic_name)
     
+    if auth_context.get("is_new_unauthenticated_user"):
+        response.headers["X-Unauthenticated-User-Id"] = auth_context["unauthenticated_user_id"]
+    
     return RandomParagraphResponse(text=generated_text, topicName=topic_name)
 
 
@@ -379,7 +411,11 @@ async def get_random_paragraph(
     summary="Check LLM API health",
     description="Test OpenAI API connection and return detailed diagnostics"
 )
-async def llm_health_check(request: Request):
+async def llm_health_check(
+    request: Request,
+    response: Response,
+    auth_context: dict = Depends(authenticate)
+):
     """Check OpenAI API connection and return detailed diagnostics."""
     try:
         # Test OpenAI connection

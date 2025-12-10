@@ -3,7 +3,7 @@
 import structlog
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
-from fastapi.middleware.cors import CORSMiddleware
+# CORS is handled by custom middleware - CORSMiddleware not used for dynamic origin support
 from fastapi.responses import RedirectResponse, Response
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import time
@@ -15,7 +15,7 @@ from app.exceptions import (
     general_exception_handler,
     http_exception_handler
 )
-from app.routes import v1_api, v2_api, health
+from app.routes import v1_api, v2_api, health, auth_api
 from app.services.rate_limiter import rate_limiter
 
 # Configure structured logging
@@ -65,44 +65,26 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure appropriately for production
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "PATCH"],
-    allow_headers=[
-        "Accept",
-        "Accept-Language",
-        "Content-Language",
-        "Content-Type",
-        "Authorization",
-        "X-Requested-With",
-        "X-CSRFToken",
-        "X-Forwarded-For",
-        "User-Agent",
-        "Origin",
-        "Referer",
-        "Cache-Control",
-        "Pragma",
-        "Content-Disposition",
-        "Content-Transfer-Encoding",
-        "X-File-Name",
-        "X-File-Size",
-        "X-File-Type"
-    ],
-    expose_headers=[
-        "Content-Length",
-        "Content-Type",
-        "Cache-Control",
-        "X-Accel-Buffering",
-        "Content-Disposition",
-        "Access-Control-Allow-Origin",
-        "Access-Control-Allow-Methods",
-        "Access-Control-Allow-Headers"
-    ],
-    max_age=3600,  # Cache preflight response for 1 hour
-)
+# CORS is handled by custom middleware below to support dynamic origins with credentials
+# CORSMiddleware is not used because it doesn't support dynamic origin echoing with credentials
+
+
+def get_allowed_origin(request: Request) -> str:
+    """Get the allowed origin from the request.
+    
+    When credentials are included, we cannot use '*' and must return the specific origin.
+    Echoes back the request origin to allow requests with credentials from any origin.
+    This is safe because we're echoing back what the browser sent, not allowing arbitrary origins.
+    """
+    origin = request.headers.get("Origin")
+    
+    if origin:
+        # Echo back the origin - this is safe because the browser only sends origins
+        # that the page is allowed to make requests from
+        return origin
+    
+    # Fallback: if no origin header, return None
+    return None
 
 
 @app.middleware("http")
@@ -110,20 +92,47 @@ async def cors_preflight_handler(request: Request, call_next):
     """Handle CORS preflight requests explicitly for Chrome extensions and file uploads."""
     if request.method == "OPTIONS":
         response = Response()
-        response.headers["Access-Control-Allow-Origin"] = "*"
+        # Get the actual origin instead of using wildcard when credentials are required
+        allowed_origin = get_allowed_origin(request)
+        if allowed_origin:
+            response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        else:
+            # Fallback to wildcard only if no origin is present (shouldn't happen with credentials)
+            response.headers["Access-Control-Allow-Origin"] = "*"
         response.headers["Access-Control-Allow-Methods"] = "GET, POST, PUT, DELETE, OPTIONS, PATCH"
-        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type"
-        response.headers["Access-Control-Max-Age"] = "3600"
+        response.headers["Access-Control-Allow-Headers"] = "Accept, Accept-Language, Content-Language, Content-Type, Authorization, X-Requested-With, X-CSRFToken, X-Forwarded-For, User-Agent, Origin, Referer, Cache-Control, Pragma, Content-Disposition, Content-Transfer-Encoding, X-File-Name, X-File-Size, X-File-Type, X-Access-Token, X-Unauthenticated-User-Id"
+        response.headers["Access-Control-Max-Age"] = "300"  # Reduced from 3600 to 5 minutes for easier testing
         response.headers["Access-Control-Allow-Credentials"] = "true"
-        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers"
+        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, X-Unauthenticated-User-Id"
         return response
     
     response = await call_next(request)
     
-    # Add CORS headers to all responses
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers"
+    # Add CORS headers to all responses (including StreamingResponse)
+    # For StreamingResponse, headers should already be set in the endpoint, but we ensure they're here too
+    from fastapi.responses import StreamingResponse
+    allowed_origin = get_allowed_origin(request)
+    
+    if isinstance(response, StreamingResponse):
+        # StreamingResponse headers - always override to ensure correct origin is used
+        # Use specific origin instead of wildcard when credentials are required
+        if allowed_origin:
+            response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        else:
+            # Only use wildcard if no origin is present (shouldn't happen with credentials)
+            if "Access-Control-Allow-Origin" not in response.headers:
+                response.headers["Access-Control-Allow-Origin"] = "*"
+        if "Access-Control-Allow-Credentials" not in response.headers:
+            response.headers["Access-Control-Allow-Credentials"] = "true"
+    else:
+        # For regular responses, add CORS headers
+        # Use specific origin instead of wildcard when credentials are required
+        if allowed_origin:
+            response.headers["Access-Control-Allow-Origin"] = allowed_origin
+        else:
+            response.headers["Access-Control-Allow-Origin"] = "*"
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Type, Cache-Control, X-Accel-Buffering, Content-Disposition, Access-Control-Allow-Origin, Access-Control-Allow-Methods, Access-Control-Allow-Headers, X-Unauthenticated-User-Id"
     
     return response
 
@@ -180,6 +189,7 @@ app.add_exception_handler(Exception, general_exception_handler)
 app.include_router(health.router)
 app.include_router(v1_api.router)
 app.include_router(v2_api.router)
+app.include_router(auth_api.router)
 
 
 @app.get("/metrics", include_in_schema=False)

@@ -135,6 +135,13 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         method=request.method
     )
     
+    # If detail is already a dict (e.g., from auth middleware with errorCode), use it directly
+    if isinstance(exc.detail, dict):
+        return JSONResponse(
+            status_code=exc.status_code,
+            content=exc.detail
+        )
+    
     # Map common HTTP status codes to our error format
     error_code_map = {
         400: "HTTP_400",
@@ -143,6 +150,7 @@ async def http_exception_handler(request: Request, exc: HTTPException) -> JSONRe
         404: "HTTP_404",
         405: "HTTP_405",
         422: "HTTP_422",
+        429: "LOGIN_REQUIRED",
         500: "HTTP_500"
     }
     

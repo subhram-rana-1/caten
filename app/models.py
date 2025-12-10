@@ -1,6 +1,7 @@
 """Pydantic models for request/response validation."""
 
 from typing import List, Optional
+from enum import Enum
 from pydantic import BaseModel, Field, ConfigDict
 
 
@@ -102,3 +103,72 @@ class RandomParagraphResponse(BaseModel):
     
     text: str = Field(..., description="Generated random paragraph text")
     topicName: str = Field(..., description="Generated topic name for the paragraph")
+
+
+class AuthVendor(str, Enum):
+    """Authentication vendor enum."""
+    GOOGLE = "GOOGLE"
+
+
+class LoginRequest(BaseModel):
+    """Request model for login."""
+    
+    authVendor: AuthVendor = Field(..., description="Authentication vendor")
+    idToken: str = Field(..., description="ID token from OAuth provider")
+
+
+class LogoutRequest(BaseModel):
+    """Request model for logout."""
+    
+    authVendor: AuthVendor = Field(..., description="Authentication vendor")
+
+
+class UserInfo(BaseModel):
+    """User information model."""
+    
+    id: str = Field(..., description="User ID (UUID)")
+    name: str = Field(..., description="User's full name")
+    firstName: Optional[str] = Field(default=None, description="User's first name")
+    lastName: Optional[str] = Field(default=None, description="User's last name")
+    email: str = Field(..., description="User's email address")
+    picture: Optional[str] = Field(default=None, description="User's profile picture URL")
+
+
+class LoginResponse(BaseModel):
+    """Response model for login."""
+    
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
+    accessToken: str = Field(..., description="JWT access token")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    refreshToken: str = Field(..., description="Refresh token for obtaining new access tokens")
+    refreshTokenExpiresAt: int = Field(..., description="Unix timestamp when refresh token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
+    user: UserInfo = Field(..., description="User information")
+
+
+class LogoutResponse(BaseModel):
+    """Response model for logout."""
+    
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
+    accessToken: str = Field(..., description="JWT access token (invalidated)")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
+    user: UserInfo = Field(..., description="User information")
+
+
+class RefreshTokenRequest(BaseModel):
+    """Request model for refresh token."""
+    
+    refreshToken: str = Field(..., description="Refresh token to validate and exchange for new tokens")
+
+
+class RefreshTokenResponse(BaseModel):
+    """Response model for refresh token - identical to LoginResponse."""
+    
+    isLoggedIn: bool = Field(..., description="Whether the user is logged in")
+    accessToken: str = Field(..., description="JWT access token")
+    accessTokenExpiresAt: int = Field(..., description="Unix timestamp when access token expires")
+    refreshToken: str = Field(..., description="Refresh token for obtaining new access tokens")
+    refreshTokenExpiresAt: int = Field(..., description="Unix timestamp when refresh token expires")
+    userSessionPk: str = Field(..., description="User session primary key (ID from user_session table)")
+    user: UserInfo = Field(..., description="User information")

@@ -752,18 +752,6 @@ def get_user_session_by_id(
     Returns:
         Dictionary with session data or None if not found
     """
-    # Entry log
-    logger.info(
-        "Getting user session by ID",
-        function="get_user_session_by_id",
-        session_id=session_id
-    )
-    
-    logger.debug(
-        "Querying database for user session",
-        function="get_user_session_by_id",
-        session_id=session_id
-    )
     result = db.execute(
         text("""
             SELECT id, auth_vendor_type, auth_vendor_id, access_token_state,
@@ -791,19 +779,7 @@ def get_user_session_by_id(
         "refresh_token_expires_at": result[5],
         "access_token_expires_at": result[6]
     }
-    
-    refresh_token_preview = session_data["refresh_token"][:8] + "..." if session_data["refresh_token"] and len(session_data["refresh_token"]) > 8 else None
-    logger.info(
-        "User session retrieved successfully",
-        function="get_user_session_by_id",
-        session_id=session_id,
-        auth_vendor_type=session_data["auth_vendor_type"],
-        access_token_state=session_data["access_token_state"],
-        refresh_token_preview=refresh_token_preview,
-        has_refresh_token_expires_at=bool(session_data["refresh_token_expires_at"]),
-        has_access_token_expires_at=bool(session_data["access_token_expires_at"])
-    )
-    
+
     return session_data
 
 

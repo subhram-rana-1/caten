@@ -10,6 +10,7 @@ import structlog
 import json
 
 from app.config import settings
+from app.services.in_memory_cache.cache_factory import get_in_memory_cache
 
 logger = structlog.get_logger()
 
@@ -752,6 +753,15 @@ def get_user_session_by_id(
     Returns:
         Dictionary with session data or None if not found
     """
+    # Get cache instance
+    cache = get_in_memory_cache()
+    cache_key = f"USER_SESSION_INFO:{session_id}"
+    
+    # Check cache first
+    cached_session = cache.get_key(cache_key)
+    if cached_session is not None:
+        return cached_session
+    
     result = db.execute(
         text("""
             SELECT id, auth_vendor_type, auth_vendor_id, access_token_state,
@@ -763,11 +773,6 @@ def get_user_session_by_id(
     ).fetchone()
     
     if not result:
-        logger.warning(
-            "User session not found",
-            function="get_user_session_by_id",
-            session_id=session_id
-        )
         return None
     
     session_data = {
@@ -779,6 +784,9 @@ def get_user_session_by_id(
         "refresh_token_expires_at": result[5],
         "access_token_expires_at": result[6]
     }
+    
+    # Store in cache before returning
+    cache.set_key(cache_key, session_data)
 
     return session_data
 
